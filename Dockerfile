@@ -16,7 +16,7 @@ COPY backend/app/ app/
 RUN pip install . --no-cache-dir
 COPY backend/alembic/ alembic/
 COPY backend/alembic.ini .
-COPY --from=frontend /build/backend/static static/
+COPY --from=frontend /build/backend/static app/static/
 RUN mkdir -p uploads data
 EXPOSE 8000
 CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

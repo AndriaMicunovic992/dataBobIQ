@@ -11,12 +11,14 @@ export default function UploadScreen({ modelId, onUploaded }) {
   const [error, setError] = useState(null);
   const [dataLayer, setDataLayer] = useState('actuals');
 
-  const handleFile = useCallback(async (file) => {
-    if (!file) return;
+  const handleFiles = useCallback(async (files) => {
+    if (!files || files.length === 0) return;
     setError(null);
     setUploading(true);
     try {
-      await uploadDataset(modelId, file, dataLayer);
+      for (const file of files) {
+        await uploadDataset(modelId, file, dataLayer);
+      }
       onUploaded();
     } catch (e) {
       setError(e.message || 'Upload failed');
@@ -28,16 +30,16 @@ export default function UploadScreen({ modelId, onUploaded }) {
   const onDrop = useCallback((e) => {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) handleFile(file);
-  }, [handleFile]);
+    const files = e.dataTransfer.files;
+    if (files?.length) handleFiles(Array.from(files));
+  }, [handleFiles]);
 
   const onDragOver = (e) => { e.preventDefault(); setDragging(true); };
   const onDragLeave = () => setDragging(false);
 
   const onInputChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) handleFile(file);
+    const files = e.target.files;
+    if (files?.length) handleFiles(Array.from(files));
     e.target.value = '';
   };
 
@@ -117,6 +119,7 @@ export default function UploadScreen({ modelId, onUploaded }) {
           onChange={onInputChange}
           style={{ display: 'none' }}
           disabled={uploading}
+          multiple
         />
 
         {uploading ? (

@@ -6,43 +6,46 @@ import { Button } from './common/Button.jsx';
 const ACCEPTED = '.xlsx,.xls,.csv';
 
 export default function UploadModal({ modelId, onClose, onSuccess }) {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [dataLayer, setDataLayer] = useState('actuals');
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState(null);
   const [dragging, setDragging] = useState(false);
 
-  const handleFile = (f) => {
-    const ext = f.name.split('.').pop().toLowerCase();
-    if (!['xlsx', 'xls', 'csv'].includes(ext)) {
-      setError('Only .xlsx, .xls, and .csv files are supported.');
-      return;
+  const handleNewFiles = (newFiles) => {
+    const valid = [];
+    for (const f of newFiles) {
+      const ext = f.name.split('.').pop().toLowerCase();
+      if (!['xlsx', 'xls', 'csv'].includes(ext)) {
+        setError('Only .xlsx, .xls, and .csv files are supported.');
+        return;
+      }
+      valid.push(f);
     }
-    setFile(f);
+    setFiles((prev) => [...prev, ...valid]);
     setError(null);
   };
 
   const onDrop = useCallback((e) => {
     e.preventDefault();
     setDragging(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) handleFile(f);
+    const dropped = e.dataTransfer.files;
+    if (dropped?.length) handleNewFiles(Array.from(dropped));
   }, []);
 
   const onInputChange = (e) => {
-    const f = e.target.files?.[0];
-    if (f) handleFile(f);
+    const selected = e.target.files;
+    if (selected?.length) handleNewFiles(Array.from(selected));
     e.target.value = '';
   };
 
   const handleUpload = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     setUploading(true);
     setError(null);
     setProgress(10);
 
-    // Simulate progress milestones
     const progressTimer = setInterval(() => {
       setProgress((p) => {
         if (p >= 80) { clearInterval(progressTimer); return 80; }
@@ -51,7 +54,9 @@ export default function UploadModal({ modelId, onClose, onSuccess }) {
     }, 800);
 
     try {
-      await uploadDataset(modelId, file, dataLayer);
+      for (const f of files) {
+        await uploadDataset(modelId, f, dataLayer);
+      }
       clearInterval(progressTimer);
       setProgress(100);
       setTimeout(onSuccess, 300);
@@ -129,7 +134,7 @@ export default function UploadModal({ modelId, onClose, onSuccess }) {
           </div>
 
           {/* Drop zone / file selected */}
-          {!file ? (
+          {files.length === 0 ? (
             <label
               onDrop={onDrop}
               onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -144,38 +149,42 @@ export default function UploadModal({ modelId, onClose, onSuccess }) {
                 marginBottom: spacing.md,
               }}
             >
-              <input type="file" accept={ACCEPTED} onChange={onInputChange} style={{ display: 'none' }} disabled={uploading} />
+              <input type="file" accept={ACCEPTED} onChange={onInputChange} style={{ display: 'none' }} disabled={uploading} multiple />
               <div style={{ fontSize: 32, marginBottom: spacing.sm }}>📂</div>
               <p style={{ margin: 0, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.medium, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
-                {dragging ? 'Drop to select' : 'Click or drag file here'}
+                {dragging ? 'Drop to select' : 'Click or drag files here'}
               </p>
               <p style={{ margin: `${spacing.xs}px 0 0`, fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>
-                Supports XLSX, XLS, CSV
+                Supports XLSX, XLS, CSV — select multiple files
               </p>
             </label>
           ) : (
-            <div style={{
-              border: `1px solid ${colors.border}`, borderRadius: radius.lg,
-              padding: spacing.md, marginBottom: spacing.md,
-              display: 'flex', alignItems: 'center', gap: spacing.md,
-              background: colors.bgMuted,
-            }}>
-              <div style={{ fontSize: 28, flexShrink: 0 }}>
-                {file.name.endsWith('.csv') ? '📄' : '📊'}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.md, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {file.name}
+            <div style={{ marginBottom: spacing.md, display: 'flex', flexDirection: 'column', gap: spacing.sm }}>
+              {files.map((f, i) => (
+                <div key={i} style={{
+                  border: `1px solid ${colors.border}`, borderRadius: radius.lg,
+                  padding: spacing.md,
+                  display: 'flex', alignItems: 'center', gap: spacing.md,
+                  background: colors.bgMuted,
+                }}>
+                  <div style={{ fontSize: 28, flexShrink: 0 }}>
+                    {f.name.endsWith('.csv') ? '📄' : '📊'}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.md, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {f.name}
+                    </div>
+                    <div style={{ color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm, marginTop: 2 }}>
+                      {formatSize(f.size)}
+                    </div>
+                  </div>
+                  {!uploading && (
+                    <button onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textMuted, fontSize: 18, lineHeight: 1 }}>
+                      ×
+                    </button>
+                  )}
                 </div>
-                <div style={{ color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm, marginTop: 2 }}>
-                  {formatSize(file.size)}
-                </div>
-              </div>
-              {!uploading && (
-                <button onClick={() => setFile(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textMuted, fontSize: 18, lineHeight: 1 }}>
-                  ×
-                </button>
-              )}
+              ))}
             </div>
           )}
 
@@ -214,7 +223,7 @@ export default function UploadModal({ modelId, onClose, onSuccess }) {
             {!uploading && <Button variant="secondary" onClick={onClose}>Cancel</Button>}
             <Button
               variant="primary"
-              disabled={!file}
+              disabled={files.length === 0}
               loading={uploading}
               onClick={handleUpload}
             >

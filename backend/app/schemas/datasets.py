@@ -43,7 +43,15 @@ class DatasetResponse(BaseModel):
     @field_validator("columns", mode="before")
     @classmethod
     def _coerce_columns(cls, v):
-        return v if v is not None else []
+        if v is None:
+            return []
+        # SQLAlchemy InstrumentedList may not be recognised as a plain list
+        if not isinstance(v, list):
+            try:
+                return list(v)
+            except TypeError:
+                return [v]
+        return v
 
 
 class DimensionInfo(BaseModel):

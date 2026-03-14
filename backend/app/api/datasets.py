@@ -44,7 +44,7 @@ async def upload_dataset(
 
     dataset_id = str(uuid.uuid4())
     safe_filename = Path(file.filename).name
-    upload_dir = Path(settings.UPLOAD_DIR)
+    upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
     dest_path = upload_dir / f"{dataset_id}_{safe_filename}"
 
@@ -157,7 +157,7 @@ async def delete_dataset(
         from app.services.storage import get_parquet_path
 
         parquet_path = Path(
-            get_parquet_path(settings.DATA_DIR, dataset.model_id, dataset_id)
+            get_parquet_path(settings.data_dir, dataset.model_id, dataset_id)
         )
         if parquet_path.exists():
             try:

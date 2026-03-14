@@ -12,8 +12,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 && rm -rf /var/lib/apt/lists/*
 COPY backend/pyproject.toml .
-RUN pip install . --no-cache-dir
 COPY backend/app/ app/
+RUN pip install . --no-cache-dir
 COPY backend/alembic/ alembic/
 COPY backend/alembic.ini .
 COPY --from=frontend /build/backend/static static/

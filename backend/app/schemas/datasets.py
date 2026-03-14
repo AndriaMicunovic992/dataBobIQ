@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,11 @@ class DatasetResponse(BaseModel):
     columns: list[DatasetColumnResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("columns", mode="before")
+    @classmethod
+    def _coerce_columns(cls, v):
+        return v if v is not None else []
 
 
 class DimensionInfo(BaseModel):

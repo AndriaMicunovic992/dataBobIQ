@@ -1,0 +1,245 @@
+id: financial_transactions
+grain: "One monetary posting to an account in a period"
+
+core:
+  measures:
+    - name: amount
+      type: currency
+      description: "Net monetary value (positive = debit/revenue, negative = credit/expense in most conventions)"
+      aliases:
+        - betrag
+        - wert
+        - value
+        - saldo
+        - balance
+        - total
+        - sum
+        - umsatz
+        - summe
+        - nettobetrag
+        - bruttobetrag
+        - amount
+
+  dimensions:
+    - name: account
+      type: text
+      description: "Account code from chart of accounts"
+      shared_dim: dim_account
+      aliases:
+        - konto
+        - hauptkonto
+        - hk
+        - sachkonto
+        - gl_account
+        - account_code
+        - account_number
+        - kontonummer
+        - account_id
+        - konto_nr
+        - kontonr
+
+    - name: period
+      type: text
+      description: "Fiscal period — YYYY-MM, YYYY-MM-DD, or date"
+      shared_dim: dim_date
+      aliases:
+        - periode
+        - monat
+        - month
+        - datum
+        - date
+        - buchungsdatum
+        - posting_date
+        - fiscal_period
+        - year_month
+        - period
+        - buchungsperiode
+        - belegdatum
+
+expected:
+  measures:
+    - name: debit_amount
+      type: currency
+      description: "Debit posting amount"
+      aliases:
+        - soll
+        - debit
+        - sollbetrag
+
+    - name: credit_amount
+      type: currency
+      description: "Credit posting amount"
+      aliases:
+        - haben
+        - credit
+        - habenbetrag
+
+  dimensions:
+    - name: cost_center
+      type: text
+      description: "Cost center or department code"
+      shared_dim: dim_cost_center
+      aliases:
+        - kostenstelle
+        - kst
+        - cost_centre
+        - cc
+        - department
+        - abteilung
+        - kostenstellennummer
+        - profit_center
+
+    - name: entity
+      type: text
+      description: "Legal entity or company code"
+      shared_dim: dim_entity
+      aliases:
+        - gesellschaft
+        - company
+        - company_code
+        - firma
+        - buchungskreis
+        - legal_entity
+        - mandant
+        - gesellschaftsnummer
+        - gesnr
+
+    - name: counter_account
+      type: text
+      description: "Offsetting account in double-entry"
+      aliases:
+        - gegenkonto
+        - offset_account
+        - gegenkontonummer
+
+    - name: document_number
+      type: text
+      description: "Voucher or posting reference"
+      aliases:
+        - belegnummer
+        - beleg
+        - voucher
+        - document_id
+        - posting_id
+        - belegid
+        - belegnr
+
+    - name: posting_text
+      type: text
+      description: "Free text description of the posting"
+      aliases:
+        - buchungstext
+        - text
+        - description
+        - bezeichnung
+        - narrative
+        - belegtext
+
+system_columns:
+  - name: data_layer
+    type: text
+    description: "Data source: actuals, budget, forecast, or scenario:{id}"
+    default: actuals
+
+  - name: source_key
+    type: text
+    description: "FK to dataset for lineage tracking"
+
+  - name: row_id
+    type: integer
+    description: "Synthetic unique row identifier"
+
+extensions: any
+
+default_kpis:
+  - kpi_id: revenue
+    label: "Revenue"
+    kpi_type: base_measure
+    expression:
+      aggregation: sum
+      field: amount
+      filter:
+        account_type: ["revenue"]
+    format:
+      type: currency
+      decimals: 0
+    sort_order: 1
+
+  - kpi_id: cogs
+    label: "COGS"
+    kpi_type: base_measure
+    expression:
+      aggregation: sum
+      field: amount
+      filter:
+        p_and_l_line: ["COGS"]
+    format:
+      type: currency
+      decimals: 0
+    sort_order: 2
+
+  - kpi_id: gross_profit
+    label: "Gross Profit"
+    kpi_type: derived
+    expression: "revenue - cogs"
+    depends_on: ["revenue", "cogs"]
+    format:
+      type: currency
+      decimals: 0
+    sort_order: 3
+
+  - kpi_id: gross_margin
+    label: "Gross Margin %"
+    kpi_type: derived
+    expression: "gross_profit / abs(revenue) * 100 if revenue != 0 else 0"
+    depends_on: ["gross_profit", "revenue"]
+    format:
+      type: percentage
+      decimals: 1
+    sort_order: 4
+
+  - kpi_id: personnel_costs
+    label: "Personnel Costs"
+    kpi_type: base_measure
+    expression:
+      aggregation: sum
+      field: amount
+      filter:
+        account_group: ["Personnel Costs", "Personalaufwand"]
+    format:
+      type: currency
+      decimals: 0
+    sort_order: 5
+
+  - kpi_id: opex
+    label: "Operating Expenses"
+    kpi_type: base_measure
+    expression:
+      aggregation: sum
+      field: amount
+      filter:
+        p_and_l_line: ["Operating Expenses"]
+    format:
+      type: currency
+      decimals: 0
+    sort_order: 6
+
+  - kpi_id: ebitda
+    label: "EBITDA"
+    kpi_type: derived
+    expression: "gross_profit - opex"
+    depends_on: ["gross_profit", "opex"]
+    format:
+      type: currency
+      decimals: 0
+    sort_order: 7
+
+  - kpi_id: ebitda_margin
+    label: "EBITDA Margin %"
+    kpi_type: derived
+    expression: "ebitda / abs(revenue) * 100 if revenue != 0 else 0"
+    depends_on: ["ebitda", "revenue"]
+    format:
+      type: percentage
+      decimals: 1
+    sort_order: 8

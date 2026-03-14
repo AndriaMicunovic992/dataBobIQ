@@ -97,10 +97,11 @@ def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _sample_values(series: pl.Series, n: int = _SAMPLE_SIZE) -> list[Any]:
-    """Return up to n non-null sample values as Python scalars."""
+    """Return up to n non-null sample values as JSON-safe Python scalars."""
     non_null = series.drop_nulls()
     taken = non_null.head(n).to_list()
-    return taken
+    # Convert date/datetime/timedelta to strings for JSONB storage
+    return [v.isoformat() if hasattr(v, 'isoformat') else str(v) if not isinstance(v, (int, float, str, bool)) else v for v in taken]
 
 
 def parse_file(file_path: str) -> tuple[pl.DataFrame, list[dict]]:

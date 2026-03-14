@@ -10,8 +10,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import FastAPI
+import traceback
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -53,11 +56,22 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Return error details in the response for debugging."""
+    tb = traceback.format_exception(type(exc), exc, exc.__traceback__)
+    logger.error("Unhandled exception on %s %s:\n%s", request.method, request.url.path, "".join(tb))
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc), "type": type(exc).__name__},
+    )
 
 # ---------------------------------------------------------------------------
 # API routers
@@ -87,8 +101,8 @@ for _module_path, _tag in _optional_routers:
         _router = getattr(_mod, "router")
         app.include_router(_router, prefix="/api")
         logger.info("Loaded router: %s", _module_path)
-    except (ImportError, ModuleNotFoundError) as _exc:
-        logger.debug("Router %s not available yet (%s) — skipping.", _module_path, _exc)
+    except Exception as _exc:
+        logger.warning("Router %s failed to load: %s: %s", _module_path, type(_exc).__name__, _exc)
 
 # ---------------------------------------------------------------------------
 # Static frontend files (served only when the build output exists)

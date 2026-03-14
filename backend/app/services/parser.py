@@ -82,11 +82,12 @@ def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Replace Utf8View and other non-standard dtypes with canonical equivalents."""
     casts: list[pl.Expr] = []
     for col_name, dtype in zip(df.columns, df.dtypes):
+        dtype_str = str(dtype)
         # Utf8View → String
-        if dtype == pl.Utf8View or str(dtype) == "Utf8View":
+        if dtype_str in ("Utf8View", "String(View)"):
             casts.append(pl.col(col_name).cast(pl.String))
         # Large String → String
-        elif dtype == pl.LargeUtf8 or str(dtype) == "LargeUtf8":
+        elif dtype_str in ("LargeUtf8", "LargeString"):
             casts.append(pl.col(col_name).cast(pl.String))
         else:
             casts.append(pl.col(col_name))

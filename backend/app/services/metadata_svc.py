@@ -31,7 +31,7 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
         .where(Dataset.model_id == model_id, Dataset.status == "active")
         .order_by(Dataset.created_at.asc())
     )
-    datasets = ds_result.scalars().all()
+    datasets = ds_result.scalars().unique().all()
 
     # Fetch scenarios
     sc_result = await db.execute(

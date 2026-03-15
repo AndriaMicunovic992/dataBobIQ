@@ -90,7 +90,7 @@ async def upload_dataset(
         .options(selectinload(Dataset.columns))
         .where(Dataset.id == dataset_id)
     )
-    dataset = result.scalar_one()
+    dataset = result.unique().scalar_one()
     return DatasetResponse.model_validate(dataset)
 
 
@@ -125,7 +125,7 @@ async def get_dataset(
         .options(selectinload(Dataset.columns))
         .where(Dataset.id == dataset_id)
     )
-    dataset = result.scalar_one_or_none()
+    dataset = result.unique().scalar_one_or_none()
     if dataset is None:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
     return DatasetResponse.model_validate(dataset)
@@ -142,7 +142,7 @@ async def delete_dataset(
         .options(selectinload(Dataset.columns))
         .where(Dataset.id == dataset_id)
     )
-    dataset = result.scalar_one_or_none()
+    dataset = result.unique().scalar_one_or_none()
     if dataset is None:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
 
@@ -188,7 +188,7 @@ async def confirm_mapping(
         .options(selectinload(Dataset.columns))
         .where(Dataset.id == dataset_id)
     )
-    dataset = result.scalar_one_or_none()
+    dataset = result.unique().scalar_one_or_none()
     if dataset is None:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} not found")
 
@@ -221,5 +221,5 @@ async def confirm_mapping(
         .options(selectinload(Dataset.columns))
         .where(Dataset.id == dataset_id)
     )
-    dataset = result.scalar_one()
+    dataset = result.unique().scalar_one()
     return DatasetResponse.model_validate(dataset)

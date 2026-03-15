@@ -56,7 +56,7 @@ async def _get_scenario_or_404(scenario_id: str, db: AsyncSession) -> Scenario:
         .options(selectinload(Scenario.rules))
         .where(Scenario.id == scenario_id)
     )
-    scenario = result.scalar_one_or_none()
+    scenario = result.unique().scalar_one_or_none()
     if scenario is None:
         raise HTTPException(status_code=404, detail=f"Scenario {scenario_id} not found")
     return scenario
@@ -109,7 +109,7 @@ async def list_scenarios(
         .where(Scenario.model_id == model_id)
         .order_by(Scenario.created_at.desc())
     )
-    scenarios = result.scalars().all()
+    scenarios = result.scalars().unique().all()
     return [ScenarioResponse.model_validate(s) for s in scenarios]
 
 

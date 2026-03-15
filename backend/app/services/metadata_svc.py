@@ -35,9 +35,11 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
 
     # Fetch scenarios
     sc_result = await db.execute(
-        select(Scenario).where(Scenario.model_id == model_id)
+        select(Scenario)
+        .options(selectinload(Scenario.rules))
+        .where(Scenario.model_id == model_id)
     )
-    scenarios = sc_result.scalars().all()
+    scenarios = sc_result.scalars().unique().all()
 
     # Fetch KPIs
     kpi_result = await db.execute(

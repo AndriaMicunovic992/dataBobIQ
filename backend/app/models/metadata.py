@@ -48,22 +48,23 @@ class Model(Base):
     )
 
     datasets: list[Dataset] = relationship(
-        "Dataset", back_populates="model", cascade="all, delete-orphan"
+        "Dataset", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
     scenarios: list[Scenario] = relationship(
-        "Scenario", back_populates="model", cascade="all, delete-orphan"
+        "Scenario", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
     kpi_definitions: list[KPIDefinition] = relationship(
-        "KPIDefinition", back_populates="model", cascade="all, delete-orphan"
+        "KPIDefinition", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
     knowledge_entries: list[KnowledgeEntry] = relationship(
-        "KnowledgeEntry", back_populates="model", cascade="all, delete-orphan"
+        "KnowledgeEntry", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
     dataset_relationships: list[DatasetRelationship] = relationship(
         "DatasetRelationship",
         back_populates="model",
         cascade="all, delete-orphan",
         foreign_keys="DatasetRelationship.model_id",
+        uselist=True,
     )
 
 
@@ -102,16 +103,16 @@ class Dataset(Base):
 
     model: Model | None = relationship("Model", back_populates="datasets")
     columns: list[DatasetColumn] = relationship(
-        "DatasetColumn", back_populates="dataset", cascade="all, delete-orphan"
+        "DatasetColumn", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
     scenarios: list[Scenario] = relationship(
-        "Scenario", back_populates="dataset", cascade="all, delete-orphan"
+        "Scenario", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
     knowledge_entries: list[KnowledgeEntry] = relationship(
-        "KnowledgeEntry", back_populates="dataset"
+        "KnowledgeEntry", back_populates="dataset", uselist=True
     )
     semantic_columns: list[SemanticColumn] = relationship(
-        "SemanticColumn", back_populates="dataset", cascade="all, delete-orphan"
+        "SemanticColumn", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
 
 
@@ -170,7 +171,7 @@ class Scenario(Base):
     model: Model | None = relationship("Model", back_populates="scenarios")
     dataset: Dataset = relationship("Dataset", back_populates="scenarios")
     rules: list[ScenarioRule] = relationship(
-        "ScenarioRule", back_populates="scenario", cascade="all, delete-orphan"
+        "ScenarioRule", back_populates="scenario", cascade="all, delete-orphan", uselist=True
     )
 
 
@@ -283,6 +284,7 @@ class SemanticColumn(Base):
         "SemanticValueLabel",
         back_populates="semantic_column",
         cascade="all, delete-orphan",
+        uselist=True,
     )
 
 

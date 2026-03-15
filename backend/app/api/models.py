@@ -7,7 +7,6 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db
@@ -85,15 +84,19 @@ async def delete_model(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a model and all associated data including Parquet files and DuckDB views."""
-    result = await db.execute(
-        select(Model).options(selectinload(Model.datasets)).where(Model.id == model_id)
-    )
-    model = result.unique().scalar_one_or_none()
+    result = await db.execute(select(Model).where(Model.id == model_id))
+    model = result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
+    # Query datasets separately to avoid eager-loading issues
+    ds_result = await db.execute(
+        select(Dataset).where(Dataset.model_id == model_id)
+    )
+    datasets = ds_result.scalars().all()
+
     # Clean up DuckDB views and Parquet files for each dataset
-    for dataset in model.datasets:
+    for dataset in datasets:
         try:
             unregister_dataset(dataset.id)
         except Exception as exc:
@@ -119,7 +122,7 @@ async def delete_model(
 
     # Remove uploaded files for each dataset
     upload_dir = Path(settings.upload_dir)
-    for dataset in model.datasets:
+    for dataset in datasets:
         for f in upload_dir.glob(f"{dataset.id}_*"):
             try:
                 f.unlink()

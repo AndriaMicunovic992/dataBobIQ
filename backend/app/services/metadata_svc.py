@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.duckdb_engine import execute_query
+from app.duckdb_engine import execute_query, view_name_for
 from app.schemas.datasets import DatasetMetadata, DimensionInfo, MeasureInfo, MetadataResponse
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,7 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
     dataset_metas: list[DatasetMetadata] = []
 
     for dataset in datasets:
-        view_name = f"ds_{dataset.id}"
+        view_name = view_name_for(dataset.id)
         columns = dataset.columns or []
 
         dimensions: list[DimensionInfo] = []

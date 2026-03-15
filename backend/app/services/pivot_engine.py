@@ -5,7 +5,7 @@ import re
 import time
 from typing import Any
 
-from app.duckdb_engine import execute_query, get_duckdb_conn
+from app.duckdb_engine import execute_query, get_duckdb_conn, view_name_for
 from app.schemas.pivot import ColumnInfo, MeasureDef, PivotRequest, PivotResponse
 
 logger = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ def _agg_expr(measure: MeasureDef) -> str:
 def _get_pivot_values(dataset_id: str, column_dimension: str, filters: dict) -> list[str]:
     """Fetch distinct values of the column_dimension field for pivoting."""
     col = _quote(column_dimension)
-    view = f"ds_{dataset_id}"
+    view = view_name_for(dataset_id)
     filter_clause, params = _build_filter_clause(filters)
     where = f"WHERE {filter_clause}" if filter_clause else ""
     sql = f"SELECT DISTINCT {col} FROM {view} {where} ORDER BY {col} LIMIT {_MAX_PIVOT_COLUMNS}"
@@ -90,7 +90,7 @@ def build_pivot_sql(
 
     Returns (sql, positional_params).
     """
-    view = f"ds_{dataset_id}"
+    view = view_name_for(dataset_id)
     filters: dict[str, list[str]] = request.filters or {}
     filter_clause, filter_params = _build_filter_clause(filters)
     params: list[Any] = list(filter_params)
@@ -184,7 +184,7 @@ def build_pivot_sql(
 
 def _count_sql(dataset_id: str, filters: dict[str, list[str]]) -> tuple[str, list[Any]]:
     """Build a COUNT(*) query for total row count (before LIMIT)."""
-    view = f"ds_{dataset_id}"
+    view = view_name_for(dataset_id)
     filter_clause, params = _build_filter_clause(filters)
     where = f"WHERE {filter_clause}" if filter_clause else ""
     sql = f"SELECT COUNT(*) AS total FROM {view} {where}"

@@ -22,31 +22,40 @@ def get_duckdb_conn() -> duckdb.DuckDBPyConnection:
     return _local.conn
 
 
+def view_name_for(dataset_id: str) -> str:
+    """Return the quoted DuckDB view name for a dataset.
+
+    UUIDs contain hyphens which are invalid in unquoted identifiers, so the
+    view name must always be double-quoted.
+    """
+    return f'"ds_{dataset_id}"'
+
+
 def register_dataset(dataset_id: str, parquet_path: str) -> None:
     """Register a Parquet file as a DuckDB view named ``ds_<dataset_id>``.
 
     The view is created (or replaced) so that subsequent queries can reference
     the dataset by its stable view name without re-specifying the file path.
     """
-    view_name = f"ds_{dataset_id}"
+    quoted = view_name_for(dataset_id)
     sql = (
-        f"CREATE OR REPLACE VIEW {view_name} AS "
+        f"CREATE OR REPLACE VIEW {quoted} AS "
         f"SELECT * FROM read_parquet('{parquet_path}')"
     )
     conn = get_duckdb_conn()
     conn.execute(sql)
-    logger.info("Registered dataset view %s -> %s", view_name, parquet_path)
+    logger.info("Registered dataset view %s -> %s", quoted, parquet_path)
 
 
 def unregister_dataset(dataset_id: str) -> None:
     """Drop the DuckDB view for the given dataset, if it exists."""
-    view_name = f"ds_{dataset_id}"
+    quoted = view_name_for(dataset_id)
     conn = get_duckdb_conn()
     try:
-        conn.execute(f"DROP VIEW IF EXISTS {view_name}")
-        logger.info("Unregistered dataset view %s", view_name)
+        conn.execute(f"DROP VIEW IF EXISTS {quoted}")
+        logger.info("Unregistered dataset view %s", quoted)
     except Exception:
-        logger.warning("Failed to drop view %s", view_name, exc_info=True)
+        logger.warning("Failed to drop view %s", quoted, exc_info=True)
 
 
 def execute_query(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:

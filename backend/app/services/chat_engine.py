@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from app.config import settings
-from app.duckdb_engine import execute_query
+from app.duckdb_engine import execute_query, view_name_for
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ _DATA_TOOLS = [
         "name": "query_data",
         "description": (
             "Execute a DuckDB SQL SELECT query against the dataset. "
-            "The dataset is available as the view ds_<dataset_id>. "
+            "The dataset is available as a quoted view \"ds_<dataset_id>\". "
             "Always use parameterized queries; never construct raw SQL from user input."
         ),
         "input_schema": {
@@ -209,7 +209,7 @@ async def _execute_tool(
 
     event_type is used for SSE event naming (e.g. 'scenario_rules', 'knowledge_saved').
     """
-    view = f"ds_{dataset_id}"
+    view = view_name_for(dataset_id)
 
     if tool_name == "query_data":
         sql = tool_input.get("sql", "")
@@ -332,10 +332,11 @@ async def stream_chat(
 
     tools = _SCENARIO_TOOLS if agent_mode == "scenario" else _DATA_TOOLS
 
+    quoted_view = view_name_for(dataset_id)
     system_prompt = f"""\
 You are a CFO AI assistant helping explore financial data and build what-if scenarios.
 You have access to DuckDB-powered analytics tools. The dataset is available as the view
-ds_{dataset_id}. Always use parameterized, safe SQL. Be concise and data-driven.
+{quoted_view}. Always use parameterized, safe SQL. Be concise and data-driven.
 
 {context}
 """

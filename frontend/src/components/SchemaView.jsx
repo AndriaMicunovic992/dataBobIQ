@@ -33,8 +33,8 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['datasets'] }),
   });
 
-  const columns = dataset.column_mappings || [];
-  const pendingCount = columns.filter((c) => c.status === 'suggested').length;
+  const columns = dataset.columns || [];
+  const needsConfirm = dataset.status === 'mapped_pending_review';
 
   const tableColumns = [
     {
@@ -72,15 +72,11 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
       },
     },
     {
-      key: 'tier', label: 'Tier',
+      key: 'column_tier', label: 'Tier',
       render: (v) => {
         const t = TIER_LABELS[v] || { label: v || '?', variant: 'default' };
         return <Badge variant={t.variant}>{t.label}</Badge>;
       },
-    },
-    {
-      key: 'status', label: 'Status',
-      render: (v) => <StatusBadge status={v || 'pending'} />,
     },
   ];
 
@@ -98,14 +94,14 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.md }}>
-              {dataset.original_filename || dataset.name}
+              {dataset.source_filename || dataset.name}
             </span>
             <StatusBadge status={dataset.status || 'pending'} />
             <Badge variant={dataset.data_layer === 'actuals' ? 'primary' : dataset.data_layer === 'budget' ? 'info' : 'warning'}>
               {dataset.data_layer}
             </Badge>
-            {pendingCount > 0 && (
-              <Badge variant="warning">{pendingCount} pending mappings</Badge>
+            {needsConfirm && (
+              <Badge variant="warning">Awaiting confirmation</Badge>
             )}
           </div>
           <div style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily, marginTop: spacing.xs }}>
@@ -113,7 +109,7 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: spacing.sm, flexShrink: 0, alignItems: 'center' }}>
-          {pendingCount > 0 && (
+          {needsConfirm && (
             <Button
               variant="success"
               size="sm"
@@ -132,7 +128,7 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
             loading={deleteMut.isPending}
             onClick={(e) => {
               e.stopPropagation();
-              if (confirm(`Delete "${dataset.original_filename}"?`)) deleteMut.mutate();
+              if (confirm(`Delete "${dataset.source_filename}"?`)) deleteMut.mutate();
             }}
           >
             Delete
@@ -169,12 +165,12 @@ export default function SchemaView({ modelId, datasets, onUpload }) {
     setExpandedId((prev) => (prev === id ? null : id));
   };
 
-  const readyDatasets = datasets.filter((d) => d.status === 'ready');
-  const totalColumns = datasets.reduce((sum, d) => sum + (d.column_mappings?.length || 0), 0);
+  const activeDatasets = datasets.filter((d) => d.status === 'active');
+  const totalColumns = datasets.reduce((sum, d) => sum + (d.columns?.length || 0), 0);
   const dimensions = datasets.reduce((sum, d) =>
-    sum + (d.column_mappings?.filter((c) => c.column_role === 'dimension').length || 0), 0);
+    sum + (d.columns?.filter((c) => ['attribute', 'time', 'key'].includes(c.column_role)).length || 0), 0);
   const measures = datasets.reduce((sum, d) =>
-    sum + (d.column_mappings?.filter((c) => c.column_role === 'measure').length || 0), 0);
+    sum + (d.columns?.filter((c) => c.column_role === 'measure').length || 0), 0);
 
   return (
     <div style={{ padding: spacing.xl }}>
@@ -196,7 +192,7 @@ export default function SchemaView({ modelId, datasets, onUpload }) {
       {/* Stats row */}
       <div style={{ display: 'flex', gap: spacing.md, marginBottom: spacing.xl, flexWrap: 'wrap' }}>
         {[
-          { label: 'Datasets', value: datasets.length, sub: `${readyDatasets.length} ready` },
+          { label: 'Datasets', value: datasets.length, sub: `${activeDatasets.length} active` },
           { label: 'Total Columns', value: totalColumns },
           { label: 'Dimensions', value: dimensions, color: colors.primary },
           { label: 'Measures', value: measures, color: colors.success },

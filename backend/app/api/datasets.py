@@ -174,11 +174,15 @@ async def delete_dataset(
 @router.post("/datasets/{dataset_id}/confirm-mapping", response_model=DatasetResponse)
 async def confirm_mapping(
     dataset_id: str,
-    mapping_config: dict,
+    body: dict,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> DatasetResponse:
-    """Confirm the AI-proposed column mapping and trigger materialization."""
+    """Confirm the AI-proposed column mapping and trigger materialization.
+
+    The body can either be the full mapping_config dict, or ``{"confirm_all": true}``
+    to accept the existing AI-proposed mapping stored on the dataset.
+    """
     result = await db.execute(
         select(Dataset)
         .options(selectinload(Dataset.columns))
@@ -193,6 +197,12 @@ async def confirm_mapping(
             status_code=409,
             detail=f"Dataset is in status '{dataset.status}'; cannot confirm mapping now",
         )
+
+    # If caller sent confirm_all=true, use the existing mapping_config
+    if body.get("confirm_all") and dataset.mapping_config:
+        mapping_config = dataset.mapping_config
+    else:
+        mapping_config = body
 
     dataset.status = "materializing"
     dataset.mapping_config = mapping_config

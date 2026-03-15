@@ -88,7 +88,7 @@ async def delete_model(
     result = await db.execute(
         select(Model).options(selectinload(Model.datasets)).where(Model.id == model_id)
     )
-    model = result.scalar_one_or_none()
+    model = result.unique().scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 

@@ -35,6 +35,7 @@ class DatasetResponse(BaseModel):
     status: str
     data_layer: str
     ai_analyzed: bool = False
+    mapping_config: dict[str, Any] | None = None
     created_at: datetime
     columns: list[DatasetColumnResponse] = []
 

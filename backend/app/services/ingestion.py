@@ -46,9 +46,11 @@ async def _save_columns(dataset_id: str, columns: list[dict]) -> None:
 
     from app.models.metadata import DatasetColumn
 
+    logger.info("Saving %d columns for dataset %s", len(columns), dataset_id)
     async with AsyncSessionLocal() as db:
         # Remove any existing columns
         await db.execute(delete(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id))
+        await db.flush()
         for i, col in enumerate(columns):
             dc = DatasetColumn(
                 dataset_id=dataset_id,
@@ -60,8 +62,14 @@ async def _save_columns(dataset_id: str, columns: list[dict]) -> None:
                 sample_values=col.get("sample_values"),
             )
             db.add(dc)
+        await db.flush()
         await db.commit()
-        logger.debug("Saved %d columns for dataset %s", len(columns), dataset_id)
+        # Verify
+        verify = await db.execute(
+            select(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id)
+        )
+        saved = verify.scalars().all()
+        logger.info("Verified %d columns saved for dataset %s", len(saved), dataset_id)
 
 
 async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:

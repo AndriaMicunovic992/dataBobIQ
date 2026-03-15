@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import logging
+import shutil
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
-from app.models.metadata import Model
+from app.duckdb_engine import unregister_dataset
+from app.models.metadata import Dataset, Model
 from app.schemas.models import ModelCreate, ModelResponse, ModelUpdate
 
 logger = logging.getLogger(__name__)
@@ -79,12 +84,50 @@ async def delete_model(
     model_id: str,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Delete a model and all associated data."""
-    result = await db.execute(select(Model).where(Model.id == model_id))
+    """Delete a model and all associated data including Parquet files and DuckDB views."""
+    result = await db.execute(
+        select(Model).options(selectinload(Model.datasets)).where(Model.id == model_id)
+    )
     model = result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
+    # Clean up DuckDB views and Parquet files for each dataset
+    for dataset in model.datasets:
+        try:
+            unregister_dataset(dataset.id)
+        except Exception as exc:
+            logger.warning("Could not unregister DuckDB view for dataset %s: %s", dataset.id, exc)
+
+        if dataset.parquet_path:
+            try:
+                p = Path(dataset.parquet_path)
+                if p.exists():
+                    p.unlink()
+                    logger.info("Removed parquet file %s", p)
+            except Exception as exc:
+                logger.warning("Could not remove parquet file for dataset %s: %s", dataset.id, exc)
+
+    # Remove the model's data directory (contains parquet + dimension files)
+    model_data_dir = Path(settings.data_dir) / model_id
+    if model_data_dir.exists():
+        try:
+            shutil.rmtree(model_data_dir)
+            logger.info("Removed model data directory %s", model_data_dir)
+        except Exception as exc:
+            logger.warning("Could not remove model data dir %s: %s", model_data_dir, exc)
+
+    # Remove uploaded files for each dataset
+    upload_dir = Path(settings.upload_dir)
+    for dataset in model.datasets:
+        for f in upload_dir.glob(f"{dataset.id}_*"):
+            try:
+                f.unlink()
+                logger.info("Removed upload file %s", f)
+            except Exception as exc:
+                logger.warning("Could not remove upload file %s: %s", f, exc)
+
+    # ORM cascade handles all related DB rows (datasets, columns, scenarios, etc.)
     await db.delete(model)
     await db.commit()
-    logger.info("Deleted model id=%s", model_id)
+    logger.info("Deleted model id=%s and all associated data", model_id)

@@ -6,7 +6,7 @@ from typing import Any
 
 import polars as pl
 
-from app.duckdb_engine import execute_query, get_duckdb_conn, register_dataset
+from app.duckdb_engine import execute_query, get_duckdb_conn, register_dataset, view_name_for
 from app.services.storage import get_parquet_path, get_scenario_path, write_parquet
 
 logger = logging.getLogger(__name__)
@@ -250,7 +250,7 @@ def build_scenario_merge_sql(
     Returns (sql, params).
     """
     params: list[Any] = []
-    base_view = f"ds_{dataset_id}"
+    base_view = view_name_for(dataset_id)
     val_col = _quote(value_field)
 
     filter_parts: list[str] = []

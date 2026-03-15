@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listModels, createModel, listDatasets } from './api.js';
+import { listModels, createModel, deleteModel, listDatasets } from './api.js';
 import { colors, spacing, radius, typography, shadows, transitions, inputStyle, labelStyle } from './theme.js';
 import { Button } from './components/common/Button.jsx';
 import ModelLanding from './components/ModelLanding.jsx';
@@ -293,6 +293,20 @@ export default function App() {
     setActiveTab('schema');
   }, [selectedModelId, qc]);
 
+  const deleteModelMut = useMutation({
+    mutationFn: (id) => deleteModel(id),
+    onSuccess: (_, deletedId) => {
+      qc.invalidateQueries({ queryKey: ['models'] });
+      if (selectedModelId === deletedId) {
+        setSelectedModelId(null);
+      }
+    },
+  });
+
+  const handleDeleteModel = useCallback((id) => {
+    deleteModelMut.mutate(id);
+  }, [deleteModelMut]);
+
   const renderContent = () => {
     if (!selectedModelId) {
       return (
@@ -300,6 +314,7 @@ export default function App() {
           models={models}
           onSelect={handleSelectModel}
           onCreate={() => setShowCreateModal(true)}
+          onDelete={handleDeleteModel}
         />
       );
     }

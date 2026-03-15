@@ -110,7 +110,7 @@ async def list_datasets(
         .where(Dataset.model_id == model_id)
         .order_by(Dataset.created_at.desc())
     )
-    datasets = result.scalars().all()
+    datasets = result.scalars().unique().all()
     return [DatasetResponse.model_validate(d) for d in datasets]
 
 

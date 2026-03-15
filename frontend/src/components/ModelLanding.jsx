@@ -2,8 +2,9 @@ import React from 'react';
 import { colors, spacing, radius, typography, shadows, transitions } from '../theme.js';
 import { Badge } from './common/Badge.jsx';
 
-function ModelCard({ model, onClick }) {
+function ModelCard({ model, onClick, onDelete }) {
   const [hovered, setHovered] = React.useState(false);
+  const [deleteHovered, setDeleteHovered] = React.useState(false);
   const created = new Date(model.created_at).toLocaleDateString();
 
   return (
@@ -23,6 +24,7 @@ function ModelCard({ model, onClick }) {
         display: 'flex',
         flexDirection: 'column',
         gap: spacing.sm,
+        position: 'relative',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -36,9 +38,35 @@ function ModelCard({ model, onClick }) {
         >
           {model.name.charAt(0).toUpperCase()}
         </div>
-        <Badge variant={model.status === 'ready' ? 'success' : 'muted'} dot>
-          {model.status || 'active'}
-        </Badge>
+        <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+          <Badge variant={model.status === 'ready' ? 'success' : 'muted'} dot>
+            {model.status || 'active'}
+          </Badge>
+          {hovered && (
+            <button
+              onMouseEnter={() => setDeleteHovered(true)}
+              onMouseLeave={() => setDeleteHovered(false)}
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm(`Delete model "${model.name}" and ALL its datasets, scenarios, and KPIs? This cannot be undone.`)) {
+                  onDelete(model.id);
+                }
+              }}
+              title="Delete model"
+              style={{
+                width: 28, height: 28, borderRadius: radius.md,
+                border: 'none', cursor: 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: deleteHovered ? colors.danger : colors.bgHover,
+                color: deleteHovered ? 'white' : colors.textMuted,
+                fontSize: 14, lineHeight: 1,
+                transition: transitions.fast,
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
       </div>
 
       <div>
@@ -132,7 +160,7 @@ function CreateCard({ onClick }) {
   );
 }
 
-export default function ModelLanding({ models, onSelect, onCreate }) {
+export default function ModelLanding({ models, onSelect, onCreate, onDelete }) {
   return (
     <div style={{ padding: spacing.xl, maxWidth: 1100, margin: '0 auto' }}>
       {/* Header */}
@@ -201,7 +229,7 @@ export default function ModelLanding({ models, onSelect, onCreate }) {
         gap: spacing.lg,
       }}>
         {models.map((model) => (
-          <ModelCard key={model.id} model={model} onClick={() => onSelect(model.id)} />
+          <ModelCard key={model.id} model={model} onClick={() => onSelect(model.id)} onDelete={onDelete} />
         ))}
         <CreateCard onClick={onCreate} />
       </div>

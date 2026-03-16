@@ -297,6 +297,12 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
         except Exception:
             logger.warning("Failed to seed calendar for model %s", model_id, exc_info=True)
 
+        # Detect relationships with other active datasets
+        try:
+            await _detect_and_save_relationships(dataset_id, model_id, column_meta)
+        except Exception:
+            logger.warning("Relationship detection failed for dataset %s", dataset_id, exc_info=True)
+
         # Persist final state
         import os as _os
         row_count_actual = len(df)
@@ -322,3 +328,78 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
             "error",
             {"ai_notes": {"error": f"Materialization failed: {exc}"}},
         )
+
+
+async def _detect_and_save_relationships(
+    dataset_id: str, model_id: str, column_meta: list[dict]
+) -> None:
+    """After materialization, detect join keys with other active datasets."""
+    from sqlalchemy import delete, select
+
+    from app.models.metadata import Dataset, DatasetColumn, DatasetRelationship
+    from app.services.relationship_detector import detect_relationships
+
+    async with AsyncSessionLocal() as db:
+        # Load other active datasets in the same model
+        result = await db.execute(
+            select(Dataset).where(
+                Dataset.model_id == model_id,
+                Dataset.status == "active",
+                Dataset.id != dataset_id,
+            )
+        )
+        other_datasets_orm = result.scalars().all()
+        if not other_datasets_orm:
+            logger.info("No other active datasets to compare for relationships")
+            return
+
+        # Build column info for each other dataset
+        other_datasets = []
+        for ds in other_datasets_orm:
+            col_result = await db.execute(
+                select(DatasetColumn).where(DatasetColumn.dataset_id == ds.id)
+            )
+            cols = col_result.scalars().all()
+            other_datasets.append({
+                "id": ds.id,
+                "columns": [
+                    {
+                        "source_name": c.source_name,
+                        "canonical_name": c.canonical_name,
+                        "column_role": c.column_role,
+                        "data_type": c.data_type,
+                    }
+                    for c in cols
+                ],
+            })
+
+        # Run detection
+        relationships = detect_relationships(dataset_id, column_meta, other_datasets)
+
+        if not relationships:
+            logger.info("No relationships detected for dataset %s", dataset_id)
+            return
+
+        # Remove old relationships involving this dataset
+        await db.execute(
+            delete(DatasetRelationship).where(
+                (DatasetRelationship.source_dataset_id == dataset_id)
+                | (DatasetRelationship.target_dataset_id == dataset_id)
+            )
+        )
+
+        # Save new relationships
+        for rel in relationships:
+            dr = DatasetRelationship(
+                model_id=model_id,
+                source_dataset_id=rel["source_dataset_id"],
+                target_dataset_id=rel["target_dataset_id"],
+                source_column=rel["source_column"],
+                target_column=rel["target_column"],
+                relationship_type=rel["relationship_type"],
+                coverage_pct=rel["coverage_pct"],
+            )
+            db.add(dr)
+
+        await db.commit()
+        logger.info("Saved %d relationships for dataset %s", len(relationships), dataset_id)

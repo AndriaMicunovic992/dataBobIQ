@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listDatasets, deleteDataset, confirmMapping, updateColumn } from '../api.js';
+import { listDatasets, deleteDataset, confirmMapping, updateColumn, listRelationships, deleteRelationship } from '../api.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
 import { Button } from './common/Button.jsx';
 import { Badge, StatusBadge } from './common/Badge.jsx';
@@ -177,6 +177,96 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
   );
 }
 
+const REL_TYPE_LABELS = {
+  many_to_one: 'N:1',
+  one_to_many: '1:N',
+  one_to_one: '1:1',
+  many_to_many: 'N:N',
+};
+
+function RelationshipsPanel({ modelId, datasets }) {
+  const qc = useQueryClient();
+  const { data: relationships = [] } = useQuery({
+    queryKey: ['relationships', modelId],
+    queryFn: () => listRelationships(modelId),
+    enabled: !!modelId,
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id) => deleteRelationship(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['relationships'] }),
+  });
+
+  const dsNameMap = {};
+  for (const ds of datasets) {
+    dsNameMap[ds.id] = ds.source_filename || ds.name;
+  }
+
+  if (relationships.length === 0) return null;
+
+  return (
+    <div style={{ ...cardStyle, marginBottom: spacing.xl, padding: spacing.md }}>
+      <h3 style={{
+        margin: `0 0 ${spacing.sm}px`, fontSize: typography.fontSizes.md,
+        fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
+        fontFamily: typography.fontFamily,
+      }}>
+        Relationships
+      </h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm }}>
+        {relationships.map((rel) => (
+          <div
+            key={rel.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: spacing.md,
+              padding: `${spacing.sm}px ${spacing.md}px`,
+              background: colors.bgMuted, borderRadius: radius.md,
+              fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
+            }}
+          >
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
+              <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary }}>
+                {dsNameMap[rel.source_dataset_id] || rel.source_dataset_id.slice(0, 8)}
+              </span>
+              <span style={{ fontFamily: 'monospace', color: colors.primary, fontSize: typography.fontSizes.xs }}>
+                .{rel.source_column}
+              </span>
+              <span style={{
+                display: 'inline-block', padding: `1px ${spacing.sm}px`,
+                background: '#ede9fe', color: '#7c3aed', borderRadius: radius.full,
+                fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium,
+              }}>
+                {REL_TYPE_LABELS[rel.relationship_type] || rel.relationship_type}
+              </span>
+              <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary }}>
+                {dsNameMap[rel.target_dataset_id] || rel.target_dataset_id.slice(0, 8)}
+              </span>
+              <span style={{ fontFamily: 'monospace', color: colors.primary, fontSize: typography.fontSizes.xs }}>
+                .{rel.target_column}
+              </span>
+              {rel.coverage_pct != null && (
+                <span style={{ color: colors.textMuted, fontSize: typography.fontSizes.xs }}>
+                  ({Math.round(rel.coverage_pct * 100)}% match)
+                </span>
+              )}
+            </div>
+            <button
+              onClick={() => deleteMut.mutate(rel.id)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: colors.textMuted, fontSize: 14, padding: spacing.xs,
+              }}
+              title="Remove relationship"
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function SchemaView({ modelId, datasets, onUpload }) {
   const [expandedId, setExpandedId] = useState(datasets[0]?.id || null);
 
@@ -233,6 +323,9 @@ export default function SchemaView({ modelId, datasets, onUpload }) {
           </div>
         ))}
       </div>
+
+      {/* Relationships */}
+      <RelationshipsPanel modelId={modelId} datasets={datasets} />
 
       {/* Dataset cards */}
       {datasets.length === 0 ? (

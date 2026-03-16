@@ -13,6 +13,9 @@ logger = logging.getLogger(__name__)
 # Allowlist for SQL identifiers to prevent injection when we must inline column names
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
+# For generated aliases (e.g. "2025-01-01__amount") — allow alphanumeric, _, -, .
+_SAFE_ALIAS_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_.:\- ]*$")
+
 # Maximum distinct values fetched for column pivot to prevent query explosion
 _MAX_PIVOT_COLUMNS = 50
 
@@ -32,25 +35,52 @@ def _quote(name: str) -> str:
     return f'"{_validate_identifier(name)}"'
 
 
-def _build_filter_clause(filters: dict[str, list[str]]) -> tuple[str, list[Any]]:
+def _quote_alias(name: str) -> str:
+    """Double-quote a generated alias (more permissive than column identifiers).
+
+    Aliases like '2025-01-01__amount' contain dashes and digits at start.
+    DuckDB handles them fine when double-quoted.
+    """
+    if not _SAFE_ALIAS_RE.match(name):
+        raise ValueError(f"Unsafe SQL alias: {name!r}")
+    # Escape any embedded double quotes
+    return f'"{name.replace(chr(34), chr(34)+chr(34))}"'
+
+
+def _build_filter_clause(
+    filters: dict[str, list[str]],
+    alias_map: dict[str, str] | None = None,
+    use_aliases: bool = False,
+) -> tuple[str, list[Any]]:
     """Build a WHERE clause from a filters dict {column: [values]}.
+
+    When alias_map is provided, qualifies columns from joined datasets
+    with their table alias, and fact-table columns with 'f.'.
 
     Returns (sql_fragment, positional_params).
     DuckDB supports positional ? parameters.
     """
     parts: list[str] = []
     params: list[Any] = []
+    alias_map = alias_map or {}
 
     for col, values in filters.items():
         if not values:
             continue
-        col_quoted = _quote(col)
+        col_name = _validate_identifier(col)
+        if col in alias_map:
+            col_qualified = f'{alias_map[col]}."{col_name}"'
+        elif use_aliases:
+            col_qualified = f'f."{col_name}"'
+        else:
+            col_qualified = f'"{col_name}"'
+
         if len(values) == 1:
-            parts.append(f"{col_quoted} = ?")
+            parts.append(f"{col_qualified} = ?")
             params.append(values[0])
         else:
             placeholders = ", ".join("?" * len(values))
-            parts.append(f"{col_quoted} IN ({placeholders})")
+            parts.append(f"{col_qualified} IN ({placeholders})")
             params.extend(values)
 
     clause = " AND ".join(parts)
@@ -154,8 +184,6 @@ def build_pivot_sql(
     """
     view = view_name_for(dataset_id)
     filters: dict[str, list[str]] = request.filters or {}
-    filter_clause, filter_params = _build_filter_clause(filters)
-    params: list[Any] = list(filter_params)
 
     # Build JOINs for cross-dataset dimensions
     join_sql, alias_map = _build_join_clauses(
@@ -163,6 +191,12 @@ def build_pivot_sql(
     )
     # When we have JOINs, alias the fact table as "f"
     use_aliases = bool(alias_map)
+
+    # Build filters with alias awareness for joined columns
+    filter_clause, filter_params = _build_filter_clause(
+        filters, alias_map=alias_map, use_aliases=use_aliases,
+    )
+    params: list[Any] = list(filter_params)
 
     # --- SELECT expressions ---
     select_parts: list[str] = []
@@ -194,7 +228,7 @@ def build_pivot_sql(
         for m in request.measures:
             expr = _qualify_measure(m)
             label = m.label or f"{m.field}_{m.aggregation}"
-            select_parts.append(f"{expr} AS {_quote(label)}")
+            select_parts.append(f"{expr} AS {_quote_alias(label)}")
             column_infos.append(ColumnInfo(field=label, type="measure"))
     else:
         # Conditional aggregation pivot
@@ -211,7 +245,7 @@ def build_pivot_sql(
                 expr = f"{agg}(CASE WHEN {col_dim_q} = ? THEN {col} END)"
                 params.append(pval)
                 label = f"{pval}__{m.field}"
-                select_parts.append(f"{expr} AS {_quote(label)}")
+                select_parts.append(f"{expr} AS {_quote_alias(label)}")
                 column_infos.append(ColumnInfo(field=label, type="measure"))
 
     # --- GROUP BY (must match SELECT expressions for dimensions) ---
@@ -276,12 +310,23 @@ def build_pivot_sql(
     return sql, params
 
 
-def _count_sql(dataset_id: str, filters: dict[str, list[str]]) -> tuple[str, list[Any]]:
+def _count_sql(
+    dataset_id: str,
+    filters: dict[str, list[str]],
+    join_sql: str = "",
+    alias_map: dict[str, str] | None = None,
+) -> tuple[str, list[Any]]:
     """Build a COUNT(*) query for total row count (before LIMIT)."""
     view = view_name_for(dataset_id)
-    filter_clause, params = _build_filter_clause(filters)
+    use_aliases = bool(alias_map)
+    filter_clause, params = _build_filter_clause(
+        filters, alias_map=alias_map, use_aliases=use_aliases,
+    )
     where = f"WHERE {filter_clause}" if filter_clause else ""
-    sql = f"SELECT COUNT(*) AS total FROM {view} {where}"
+    if use_aliases:
+        sql = f"SELECT COUNT(*) AS total FROM {view} AS f {join_sql} {where}"
+    else:
+        sql = f"SELECT COUNT(*) AS total FROM {view} {where}"
     return sql, list(params)
 
 
@@ -294,14 +339,22 @@ def execute_pivot(
     """Build and execute the pivot query, returning a PivotResponse."""
     t0 = time.perf_counter()
 
+    # Build JOINs (needed for both main query and count query)
+    join_sql, alias_map = _build_join_clauses(
+        dataset_id, request.join_dimensions, relationships,
+    )
+
     # Build SELECT
     sql, params = build_pivot_sql(request, dataset_id, scenario_ids, relationships)
     logger.debug("Pivot SQL: %s | params=%s", sql, params)
 
     rows = execute_query(sql, params if params else None)
 
-    # Count total (without LIMIT)
-    count_sql, count_params = _count_sql(dataset_id, request.filters or {})
+    # Count total (without LIMIT) — pass JOINs so filters on joined columns work
+    count_sql, count_params = _count_sql(
+        dataset_id, request.filters or {},
+        join_sql=join_sql, alias_map=alias_map,
+    )
     count_rows = execute_query(count_sql, count_params if count_params else None)
     total_count = count_rows[0]["total"] if count_rows else 0
 

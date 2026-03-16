@@ -47,19 +47,21 @@ class Model(Base):
         DateTime(timezone=True), nullable=True, onupdate=func.now()
     )
 
-    datasets: list[Dataset] = relationship(
+    # NOTE: No type annotations on relationships — `from __future__ import annotations`
+    # turns them into strings that SQLAlchemy misinterprets, overriding uselist=True.
+    datasets = relationship(
         "Dataset", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
-    scenarios: list[Scenario] = relationship(
+    scenarios = relationship(
         "Scenario", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
-    kpi_definitions: list[KPIDefinition] = relationship(
+    kpi_definitions = relationship(
         "KPIDefinition", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
-    knowledge_entries: list[KnowledgeEntry] = relationship(
+    knowledge_entries = relationship(
         "KnowledgeEntry", back_populates="model", cascade="all, delete-orphan", uselist=True
     )
-    dataset_relationships: list[DatasetRelationship] = relationship(
+    dataset_relationships = relationship(
         "DatasetRelationship",
         back_populates="model",
         cascade="all, delete-orphan",
@@ -101,17 +103,17 @@ class Dataset(Base):
         DateTime(timezone=True), nullable=True, onupdate=func.now()
     )
 
-    model: Model | None = relationship("Model", back_populates="datasets")
-    columns: list[DatasetColumn] = relationship(
+    model = relationship("Model", back_populates="datasets")
+    columns = relationship(
         "DatasetColumn", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
-    scenarios: list[Scenario] = relationship(
+    scenarios = relationship(
         "Scenario", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
-    knowledge_entries: list[KnowledgeEntry] = relationship(
+    knowledge_entries = relationship(
         "KnowledgeEntry", back_populates="dataset", uselist=True
     )
-    semantic_columns: list[SemanticColumn] = relationship(
+    semantic_columns = relationship(
         "SemanticColumn", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
 
@@ -140,7 +142,7 @@ class DatasetColumn(Base):
     sample_values: list[Any] | None = Column(JSONB, nullable=True)
     ai_suggestion: dict[str, Any] | None = Column(JSONB, nullable=True)
 
-    dataset: Dataset = relationship("Dataset", back_populates="columns")
+    dataset = relationship("Dataset", back_populates="columns")
 
 
 class Scenario(Base):
@@ -168,9 +170,9 @@ class Scenario(Base):
         DateTime(timezone=True), nullable=True, onupdate=func.now()
     )
 
-    model: Model | None = relationship("Model", back_populates="scenarios")
-    dataset: Dataset = relationship("Dataset", back_populates="scenarios")
-    rules: list[ScenarioRule] = relationship(
+    model = relationship("Model", back_populates="scenarios")
+    dataset = relationship("Dataset", back_populates="scenarios")
+    rules = relationship(
         "ScenarioRule", back_populates="scenario", cascade="all, delete-orphan", uselist=True
     )
 
@@ -199,7 +201,7 @@ class ScenarioRule(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    scenario: Scenario = relationship("Scenario", back_populates="rules")
+    scenario = relationship("Scenario", back_populates="rules")
 
 
 class KPIDefinition(Base):
@@ -226,7 +228,7 @@ class KPIDefinition(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    model: Model = relationship("Model", back_populates="kpi_definitions")
+    model = relationship("Model", back_populates="kpi_definitions")
 
 
 class KnowledgeEntry(Base):
@@ -254,8 +256,8 @@ class KnowledgeEntry(Base):
         DateTime(timezone=True), nullable=True, onupdate=func.now()
     )
 
-    model: Model = relationship("Model", back_populates="knowledge_entries")
-    dataset: Dataset | None = relationship("Dataset", back_populates="knowledge_entries")
+    model = relationship("Model", back_populates="knowledge_entries")
+    dataset = relationship("Dataset", back_populates="knowledge_entries")
 
 
 class SemanticColumn(Base):
@@ -279,8 +281,8 @@ class SemanticColumn(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    dataset: Dataset = relationship("Dataset", back_populates="semantic_columns")
-    value_labels: list[SemanticValueLabel] = relationship(
+    dataset = relationship("Dataset", back_populates="semantic_columns")
+    value_labels = relationship(
         "SemanticValueLabel",
         back_populates="semantic_column",
         cascade="all, delete-orphan",
@@ -308,7 +310,7 @@ class SemanticValueLabel(Base):
     category: str | None = Column(String(100), nullable=True)
     sort_order: int = Column(Integer, nullable=False, default=0)
 
-    semantic_column: SemanticColumn = relationship(
+    semantic_column = relationship(
         "SemanticColumn", back_populates="value_labels"
     )
 
@@ -337,7 +339,7 @@ class DatasetRelationship(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    model: Model = relationship(
+    model = relationship(
         "Model",
         back_populates="dataset_relationships",
         foreign_keys=[model_id],

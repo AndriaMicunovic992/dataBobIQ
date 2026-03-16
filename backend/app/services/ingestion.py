@@ -291,9 +291,9 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
         # Register in DuckDB
         register_dataset(dataset_id, parquet_path)
 
-        # Seed calendar if not already present
+        # Seed calendar dimension if not already present
         try:
-            seed_calendar(model_id, data_dir)
+            await _ensure_calendar_dataset(model_id, data_dir)
         except Exception:
             logger.warning("Failed to seed calendar for model %s", model_id, exc_info=True)
 
@@ -403,3 +403,85 @@ async def _detect_and_save_relationships(
 
         await db.commit()
         logger.info("Saved %d relationships for dataset %s", len(relationships), dataset_id)
+
+
+# Stable deterministic ID for the calendar dataset within a model.
+_CALENDAR_ID_NAMESPACE = "dim_date"
+
+
+def _calendar_dataset_id(model_id: str) -> str:
+    """Generate a deterministic dataset ID for the calendar dimension."""
+    import hashlib
+    return hashlib.sha256(f"{model_id}:{_CALENDAR_ID_NAMESPACE}".encode()).hexdigest()[:36]
+
+
+_CALENDAR_COLUMNS = [
+    {"source_name": "date_key", "display_name": "Date Key", "data_type": "integer", "column_role": "key"},
+    {"source_name": "date", "display_name": "Date", "data_type": "date", "column_role": "time"},
+    {"source_name": "year", "display_name": "Year", "data_type": "integer", "column_role": "time"},
+    {"source_name": "quarter", "display_name": "Quarter", "data_type": "integer", "column_role": "time"},
+    {"source_name": "month", "display_name": "Month", "data_type": "integer", "column_role": "time"},
+    {"source_name": "month_name", "display_name": "Month Name", "data_type": "string", "column_role": "time"},
+    {"source_name": "fiscal_year", "display_name": "Fiscal Year", "data_type": "integer", "column_role": "time"},
+    {"source_name": "fiscal_quarter", "display_name": "Fiscal Quarter", "data_type": "integer", "column_role": "time"},
+    {"source_name": "day_of_week", "display_name": "Day of Week", "data_type": "integer", "column_role": "attribute"},
+    {"source_name": "day_name", "display_name": "Day Name", "data_type": "string", "column_role": "attribute"},
+    {"source_name": "is_weekend", "display_name": "Is Weekend", "data_type": "boolean", "column_role": "attribute"},
+    {"source_name": "week_of_year", "display_name": "Week of Year", "data_type": "integer", "column_role": "attribute"},
+]
+
+
+async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> None:
+    """Seed the calendar Parquet file, create a Dataset record, and register in DuckDB.
+
+    Idempotent — skips if the dataset already exists.
+    """
+    from sqlalchemy import select
+    from app.models.metadata import Dataset, DatasetColumn
+    from app.services.storage import get_dimension_path
+
+    cal_id = _calendar_dataset_id(model_id)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Dataset).where(Dataset.id == cal_id))
+        if result.scalar_one_or_none() is not None:
+            # Already created — just make sure DuckDB view exists
+            parquet_path = get_dimension_path(data_dir, model_id, "dim_date")
+            register_dataset(cal_id, parquet_path)
+            return
+
+    # Seed the Parquet file
+    parquet_path = seed_calendar(model_id, data_dir)
+
+    # Register in DuckDB
+    register_dataset(cal_id, parquet_path)
+
+    # Create Dataset record
+    async with AsyncSessionLocal() as db:
+        ds = Dataset(
+            id=cal_id,
+            model_id=model_id,
+            name="Calendar (dim_date)",
+            source_filename="dim_date (system)",
+            fact_type="dimension",
+            row_count=4018,  # ~11 years of days
+            status="active",
+            data_layer="dimension",
+            ai_analyzed=False,
+            parquet_path=parquet_path,
+        )
+        db.add(ds)
+        await db.flush()
+
+        for col_def in _CALENDAR_COLUMNS:
+            dc = DatasetColumn(
+                dataset_id=cal_id,
+                source_name=col_def["source_name"],
+                display_name=col_def["display_name"],
+                data_type=col_def["data_type"],
+                column_role=col_def["column_role"],
+            )
+            db.add(dc)
+
+        await db.commit()
+        logger.info("Created calendar dataset %s for model %s", cal_id, model_id)

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listModels, createModel, deleteModel, listDatasets } from './api.js';
 import { colors, spacing, radius, typography, shadows, transitions, inputStyle, labelStyle } from './theme.js';
@@ -277,7 +277,24 @@ export default function App() {
     queryKey: ['datasets', selectedModelId],
     queryFn: () => listDatasets(selectedModelId),
     enabled: !!selectedModelId,
+    refetchInterval: (query) => {
+      const ds = query.state.data || [];
+      const processing = ds.some((d) =>
+        ['queued', 'parsing', 'parsed', 'mapping', 'mapped_pending_review', 'materializing'].includes(d.status)
+      );
+      return processing ? 3000 : false;
+    },
   });
+
+  // Invalidate metadata when a dataset becomes active
+  const prevActiveCountRef = useRef(0);
+  useEffect(() => {
+    const activeCount = datasets.filter((d) => d.status === 'active').length;
+    if (activeCount > prevActiveCountRef.current && prevActiveCountRef.current > 0) {
+      qc.invalidateQueries({ queryKey: ['metadata', selectedModelId] });
+    }
+    prevActiveCountRef.current = activeCount;
+  }, [datasets, selectedModelId, qc]);
 
   const hasDatasets = datasets.length > 0;
 

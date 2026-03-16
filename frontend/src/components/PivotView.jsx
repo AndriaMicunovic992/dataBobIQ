@@ -42,7 +42,10 @@ export default function PivotView({ modelId }) {
     if (!datasetId || pivotConfig.values.length === 0) return null;
     const map = metadata?.fieldDatasetMap || {};
     // Identify dimensions that belong to other datasets (need JOINs)
-    const allDims = [...(pivotConfig.rows || []), ...(pivotConfig.columns || [])];
+    // Include row dims, column dims, AND filter fields so filtered dimension
+    // columns are properly joined before the WHERE clause references them.
+    const filterFields = (pivotConfig.filters || []).map((f) => f.field).filter(Boolean);
+    const allDims = [...(pivotConfig.rows || []), ...(pivotConfig.columns || []), ...filterFields];
     const joinDims = {};
     for (const dim of allDims) {
       const dimDs = map[dim];

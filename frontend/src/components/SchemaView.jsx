@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { listDatasets, deleteDataset, confirmMapping, updateColumn, listRelationships, createRelationship, updateRelationship, deleteRelationship } from '../api.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
@@ -203,7 +203,23 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
 
   const dsColMap = {};
   for (const ds of datasets) {
-    dsColMap[ds.id] = (ds.columns || []).map((c) => c.canonical_name || c.source_name);
+    // Collect all unique column names (canonical preferred, fallback to source)
+    // Include both so date/time columns are always visible
+    const seen = new Set();
+    const cols = [];
+    for (const c of (ds.columns || [])) {
+      const name = c.canonical_name || c.source_name;
+      if (!seen.has(name)) {
+        seen.add(name);
+        cols.push({ name, type: c.data_type, role: c.column_role, source: c.source_name });
+      }
+      // Also include source_name if it differs (ensures original names are available)
+      if (c.canonical_name && c.source_name && c.canonical_name !== c.source_name && !seen.has(c.source_name)) {
+        seen.add(c.source_name);
+        cols.push({ name: c.source_name, type: c.data_type, role: c.column_role, source: c.source_name });
+      }
+    }
+    dsColMap[ds.id] = cols;
   }
 
   const srcCols = dsColMap[form.source_dataset_id] || [];
@@ -225,7 +241,7 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
       <select style={selectStyle} value={form.source_column}
         onChange={(e) => setForm((f) => ({ ...f, source_column: e.target.value }))}>
         <option value="">column...</option>
-        {srcCols.map((c) => <option key={c} value={c}>{c}</option>)}
+        {srcCols.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}
       </select>
       <select style={{ ...selectStyle, background: '#ede9fe', color: '#7c3aed', fontWeight: typography.fontWeights.medium, border: 'none' }}
         value={form.relationship_type}
@@ -239,7 +255,7 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
       <select style={selectStyle} value={form.target_column}
         onChange={(e) => setForm((f) => ({ ...f, target_column: e.target.value }))}>
         <option value="">column...</option>
-        {tgtCols.map((c) => <option key={c} value={c}>{c}</option>)}
+        {tgtCols.map((c) => <option key={c.name} value={c.name}>{c.name} ({c.type})</option>)}
       </select>
       <Button variant="success" size="sm" disabled={!valid || saving} loading={saving}
         onClick={() => onSave(form)}>
@@ -250,12 +266,29 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
   );
 }
 
+const PROCESSING_STATUSES = new Set([
+  'queued', 'parsing', 'parsed', 'mapping', 'materializing', 'mapped_pending_review',
+]);
+
 function RelationshipsPanel({ modelId, datasets }) {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
 
-  const { data: relationships = [] } = useQuery({
+  const anyProcessing = datasets.some((d) => PROCESSING_STATUSES.has(d.status));
+
+  // Track active count so we can refetch relationships when a dataset becomes active
+  const prevActiveCountRef = useRef(datasets.filter((d) => d.status === 'active').length);
+  useEffect(() => {
+    const activeCount = datasets.filter((d) => d.status === 'active').length;
+    if (activeCount > prevActiveCountRef.current) {
+      // A dataset just became active — relationships may have been auto-detected
+      qc.invalidateQueries({ queryKey: ['relationships', modelId] });
+    }
+    prevActiveCountRef.current = activeCount;
+  }, [datasets, modelId, qc]);
+
+  const { data: relationships = [], isLoading: relsLoading } = useQuery({
     queryKey: ['relationships', modelId],
     queryFn: () => listRelationships(modelId),
     enabled: !!modelId,
@@ -275,13 +308,26 @@ function RelationshipsPanel({ modelId, datasets }) {
   return (
     <div style={{ ...cardStyle, marginBottom: spacing.xl, padding: spacing.md }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm }}>
-        <h3 style={{
-          margin: 0, fontSize: typography.fontSizes.md,
-          fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
-          fontFamily: typography.fontFamily,
-        }}>
-          Relationships
-        </h3>
+        <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
+          <h3 style={{
+            margin: 0, fontSize: typography.fontSizes.md,
+            fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
+            fontFamily: typography.fontFamily,
+          }}>
+            Relationships
+          </h3>
+          {(relsLoading || anyProcessing) && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: spacing.xs, fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily }}>
+              <span style={{
+                display: 'inline-block', width: 12, height: 12,
+                border: `2px solid ${colors.primary}`, borderTopColor: 'transparent',
+                borderRadius: '50%', animation: 'rel-spin 0.7s linear infinite',
+              }} />
+              {anyProcessing ? 'Detecting...' : 'Loading...'}
+              <style>{`@keyframes rel-spin { to { transform: rotate(360deg); } }`}</style>
+            </span>
+          )}
+        </div>
         {datasets.length >= 2 && !showForm && (
           <Button variant="ghost" size="sm" onClick={() => setShowForm(true)}>+ Add</Button>
         )}

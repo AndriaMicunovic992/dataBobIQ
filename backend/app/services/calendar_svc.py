@@ -92,6 +92,7 @@ def seed_calendar(
     day_names = [_DAY_NAMES[d.weekday()] for d in dates]
     is_weekends = [d.weekday() >= 5 for d in dates]
     week_of_years = [d.isocalendar()[1] for d in dates]
+    year_months = [d.strftime("%Y-%m") for d in dates]
 
     df = pl.DataFrame({
         "date_key": pl.Series(date_keys, dtype=pl.Int32),
@@ -106,6 +107,7 @@ def seed_calendar(
         "day_name": pl.Series(day_names, dtype=pl.String),
         "is_weekend": pl.Series(is_weekends, dtype=pl.Boolean),
         "week_of_year": pl.Series(week_of_years, dtype=pl.Int32),
+        "year_month": pl.Series(year_months, dtype=pl.String),
     })
 
     path = get_dimension_path(data_dir, model_id, "dim_date")

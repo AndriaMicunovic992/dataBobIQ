@@ -68,8 +68,12 @@ def detect_relationships(
             for oc in other_dim_cols:
                 oc_name = oc.get("canonical_name") or oc["source_name"]
 
-                # Quick heuristic: column names should be similar or share a word
-                if not _names_could_match(nc_name, nc["source_name"], oc_name, oc["source_name"]):
+                # Quick heuristic: column names should be similar or share a word,
+                # OR both are date/time-typed columns (calendar join candidates).
+                if not _names_could_match(
+                    nc_name, nc["source_name"], oc_name, oc["source_name"],
+                    nc_type=nc.get("data_type"), oc_type=oc.get("data_type"),
+                ):
                     continue
 
                 try:
@@ -106,9 +110,14 @@ def detect_relationships(
     return results
 
 
+_DATE_TYPES = {"date", "datetime", "timestamp"}
+
+
 def _names_could_match(
     nc_canonical: str, nc_source: str,
     oc_canonical: str, oc_source: str,
+    nc_type: str | None = None,
+    oc_type: str | None = None,
 ) -> bool:
     """Quick check whether two column names plausibly refer to the same thing."""
     names = {
@@ -132,7 +141,15 @@ def _names_could_match(
     for n in others:
         words_b.update(w for w in n.replace("_", " ").split() if len(w) >= 3)
 
-    return bool(words_a & words_b)
+    if words_a & words_b:
+        return True
+
+    # Both are date/time typed — likely calendar join candidates
+    if nc_type and oc_type:
+        if nc_type.lower() in _DATE_TYPES and oc_type.lower() in _DATE_TYPES:
+            return True
+
+    return False
 
 
 def _compute_coverage(

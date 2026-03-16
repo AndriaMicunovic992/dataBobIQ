@@ -4,7 +4,7 @@ import { colors, spacing, radius, typography } from '../theme.js';
 function formatValue(val, field = '') {
   if (val === null || val === undefined) return '—';
   if (typeof val === 'number') {
-    const isAmt = /amount|revenue|cost|expense|profit|total|sales|price/i.test(field);
+    const isAmt = /amount|revenue|cost|expense|profit|total|sales|price|debit|credit/i.test(field);
     if (isAmt) {
       return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 }).format(val);
     }
@@ -51,15 +51,19 @@ export default function PivotTable({ data, loading, error }) {
     );
   }
 
-  const columns = data.columns || [];
+  // API returns columns as [{field, type}] and rows as [[val, val, ...]]
+  const colDefs = (data.columns || []).map((c) =>
+    typeof c === 'string' ? { field: c, type: 'dimension' } : c
+  );
+  const colNames = colDefs.map((c) => c.field);
   const rows = data.rows || [];
-  const totalRow = data.total_row;
+  const totals = data.totals || null;
 
-  const handleSort = (col) => {
-    if (sortCol === col) {
+  const handleSort = (colIdx) => {
+    if (sortCol === colIdx) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
-      setSortCol(col);
+      setSortCol(colIdx);
       setSortDir('desc');
     }
   };
@@ -76,9 +80,8 @@ export default function PivotTable({ data, loading, error }) {
     });
   }
 
-  // Detect which columns are numeric for alignment
-  const isNumeric = (col) => {
-    return rows.some((r) => typeof r[col] === 'number');
+  const isNumericCol = (idx) => {
+    return colDefs[idx]?.type === 'measure' || rows.some((r) => typeof r[idx] === 'number');
   };
 
   return (
@@ -86,29 +89,29 @@ export default function PivotTable({ data, loading, error }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
         <thead>
           <tr style={{ background: colors.bgMuted, borderBottom: `2px solid ${colors.border}` }}>
-            {columns.map((col, i) => {
-              const numeric = isNumeric(col);
+            {colNames.map((name, i) => {
+              const numeric = isNumericCol(i);
               return (
                 <th
                   key={i}
-                  onClick={() => handleSort(col)}
+                  onClick={() => handleSort(i)}
                   style={{
                     padding: `${spacing.sm}px ${spacing.md}px`,
                     textAlign: numeric ? 'right' : 'left',
                     fontSize: typography.fontSizes.xs,
                     fontWeight: typography.fontWeights.semibold,
-                    color: sortCol === col ? colors.primary : colors.textSecondary,
+                    color: sortCol === i ? colors.primary : colors.textSecondary,
                     textTransform: 'uppercase',
                     letterSpacing: '0.05em',
                     whiteSpace: 'nowrap',
                     cursor: 'pointer',
                     userSelect: 'none',
-                    borderRight: i < columns.length - 1 ? `1px solid ${colors.border}` : 'none',
+                    borderRight: i < colNames.length - 1 ? `1px solid ${colors.border}` : 'none',
                     transition: 'color 0.1s',
                   }}
                 >
-                  {col}
-                  {sortCol === col && (sortDir === 'asc' ? ' ▲' : ' ▼')}
+                  {name}
+                  {sortCol === i && (sortDir === 'asc' ? ' ▲' : ' ▼')}
                 </th>
               );
             })}
@@ -118,7 +121,7 @@ export default function PivotTable({ data, loading, error }) {
           {sortedRows.length === 0 ? (
             <tr>
               <td
-                colSpan={columns.length}
+                colSpan={colNames.length}
                 style={{ padding: spacing.xl, textAlign: 'center', color: colors.textMuted }}
               >
                 No data returned
@@ -126,13 +129,12 @@ export default function PivotTable({ data, loading, error }) {
             </tr>
           ) : (
             sortedRows.map((row, ri) => (
-              <DataRow key={ri} row={row} columns={columns} isLast={ri === sortedRows.length - 1 && !totalRow} />
+              <DataRow key={ri} row={row} colNames={colNames} colDefs={colDefs} isNumericCol={isNumericCol} isLast={ri === sortedRows.length - 1 && !totals} />
             ))
           )}
-          {totalRow && (
+          {totals && (
             <tr style={{ background: '#f0f9ff', borderTop: `2px solid ${colors.border}` }}>
-              {columns.map((col, ci) => {
-                const val = totalRow[col];
+              {totals.map((val, ci) => {
                 const numeric = typeof val === 'number';
                 return (
                   <td
@@ -142,12 +144,12 @@ export default function PivotTable({ data, loading, error }) {
                       textAlign: numeric ? 'right' : 'left',
                       fontWeight: typography.fontWeights.bold,
                       color: colors.primary,
-                      borderRight: ci < columns.length - 1 ? `1px solid ${colors.border}` : 'none',
+                      borderRight: ci < colNames.length - 1 ? `1px solid ${colors.border}` : 'none',
                       fontFamily: 'monospace',
                       fontSize: typography.fontSizes.sm,
                     }}
                   >
-                    {formatValue(val, col)}
+                    {formatValue(val, colNames[ci])}
                   </td>
                 );
               })}
@@ -157,14 +159,14 @@ export default function PivotTable({ data, loading, error }) {
       </table>
       {rows.length > 0 && (
         <div style={{ padding: `${spacing.xs}px ${spacing.md}px`, borderTop: `1px solid ${colors.border}`, color: colors.textMuted, fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily }}>
-          {rows.length} rows
+          {data.row_count || rows.length} rows{data.total_row_count > rows.length ? ` of ${data.total_row_count}` : ''}
         </div>
       )}
     </div>
   );
 }
 
-function DataRow({ row, columns, isLast }) {
+function DataRow({ row, colNames, colDefs, isNumericCol, isLast }) {
   const [hovered, setHovered] = React.useState(false);
 
   return (
@@ -177,8 +179,7 @@ function DataRow({ row, columns, isLast }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {columns.map((col, ci) => {
-        const val = row[col];
+      {row.map((val, ci) => {
         const numeric = typeof val === 'number';
         return (
           <td
@@ -186,14 +187,14 @@ function DataRow({ row, columns, isLast }) {
             style={{
               padding: `${spacing.sm}px ${spacing.md}px`,
               textAlign: numeric ? 'right' : 'left',
-              color: numeric ? colors.textPrimary : colors.textPrimary,
+              color: colors.textPrimary,
               fontFamily: numeric ? 'monospace' : typography.fontFamily,
               fontSize: typography.fontSizes.sm,
-              borderRight: ci < columns.length - 1 ? `1px solid ${colors.border}` : 'none',
+              borderRight: ci < colNames.length - 1 ? `1px solid ${colors.border}` : 'none',
               whiteSpace: 'nowrap',
             }}
           >
-            {formatValue(val, col)}
+            {formatValue(val, colNames[ci])}
           </td>
         );
       })}

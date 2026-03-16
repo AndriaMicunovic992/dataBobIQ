@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.duckdb_engine import unregister_dataset
 from app.models.metadata import Dataset, DatasetColumn, DatasetRelationship, Model
-from app.schemas.datasets import DatasetColumnUpdate, DatasetResponse, RelationshipResponse
+from app.schemas.datasets import DatasetColumnUpdate, DatasetResponse, RelationshipCreate, RelationshipResponse, RelationshipUpdate
 from app.services.ingestion import confirm_mapping_and_materialize, process_upload
 
 logger = logging.getLogger(__name__)
@@ -274,6 +274,64 @@ async def list_relationships(
     )
     rels = result.scalars().all()
     return [RelationshipResponse.model_validate(r) for r in rels]
+
+
+@router.post(
+    "/models/{model_id}/relationships",
+    response_model=RelationshipResponse,
+    status_code=201,
+)
+async def create_relationship(
+    model_id: str,
+    body: RelationshipCreate,
+    db: AsyncSession = Depends(get_db),
+) -> RelationshipResponse:
+    """Create a new relationship between two dataset columns."""
+    result = await db.execute(select(Model).where(Model.id == model_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+
+    rel = DatasetRelationship(
+        id=str(uuid.uuid4()),
+        model_id=model_id,
+        source_dataset_id=body.source_dataset_id,
+        target_dataset_id=body.target_dataset_id,
+        source_column=body.source_column,
+        target_column=body.target_column,
+        relationship_type=body.relationship_type,
+    )
+    db.add(rel)
+    await db.commit()
+    await db.refresh(rel)
+    logger.info("Created relationship id=%s for model=%s", rel.id, model_id)
+    return RelationshipResponse.model_validate(rel)
+
+
+@router.patch(
+    "/relationships/{relationship_id}",
+    response_model=RelationshipResponse,
+)
+async def update_relationship(
+    relationship_id: str,
+    body: RelationshipUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> RelationshipResponse:
+    """Update an existing relationship."""
+    result = await db.execute(
+        select(DatasetRelationship).where(DatasetRelationship.id == relationship_id)
+    )
+    rel = result.scalar_one_or_none()
+    if rel is None:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(rel, field, value)
+
+    await db.commit()
+    await db.refresh(rel)
+    logger.info("Updated relationship id=%s: %s", relationship_id, update_data)
+    return RelationshipResponse.model_validate(rel)
 
 
 @router.delete("/relationships/{relationship_id}", status_code=204)

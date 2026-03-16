@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listDatasets, deleteDataset, confirmMapping, updateColumn, listRelationships, deleteRelationship } from '../api.js';
+import { listDatasets, deleteDataset, confirmMapping, updateColumn, listRelationships, createRelationship, updateRelationship, deleteRelationship } from '../api.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
 import { Button } from './common/Button.jsx';
 import { Badge, StatusBadge } from './common/Badge.jsx';
@@ -178,84 +178,204 @@ const REL_TYPE_LABELS = {
   many_to_many: 'N:N',
 };
 
+const REL_TYPES = ['many_to_one', 'one_to_many', 'one_to_one', 'many_to_many'];
+
+const selectStyle = {
+  padding: `2px ${spacing.sm}px`,
+  borderRadius: radius.sm,
+  border: `1px solid ${colors.border}`,
+  fontSize: typography.fontSizes.xs,
+  fontFamily: typography.fontFamily,
+  color: colors.textPrimary,
+  background: colors.bgCard,
+  cursor: 'pointer',
+  outline: 'none',
+};
+
+function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
+  const [form, setForm] = useState(initial || {
+    source_dataset_id: datasets[0]?.id || '',
+    target_dataset_id: datasets[1]?.id || datasets[0]?.id || '',
+    source_column: '',
+    target_column: '',
+    relationship_type: 'many_to_one',
+  });
+
+  const dsColMap = {};
+  for (const ds of datasets) {
+    dsColMap[ds.id] = (ds.columns || []).map((c) => c.canonical_name || c.source_name);
+  }
+
+  const srcCols = dsColMap[form.source_dataset_id] || [];
+  const tgtCols = dsColMap[form.target_dataset_id] || [];
+
+  const valid = form.source_dataset_id && form.target_dataset_id && form.source_column && form.target_column;
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap',
+      padding: `${spacing.sm}px ${spacing.md}px`,
+      background: '#fefce8', borderRadius: radius.md, border: `1px solid #fde68a`,
+      fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
+    }}>
+      <select style={selectStyle} value={form.source_dataset_id}
+        onChange={(e) => setForm((f) => ({ ...f, source_dataset_id: e.target.value, source_column: '' }))}>
+        {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.source_filename || ds.name}</option>)}
+      </select>
+      <select style={selectStyle} value={form.source_column}
+        onChange={(e) => setForm((f) => ({ ...f, source_column: e.target.value }))}>
+        <option value="">column...</option>
+        {srcCols.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <select style={{ ...selectStyle, background: '#ede9fe', color: '#7c3aed', fontWeight: typography.fontWeights.medium, border: 'none' }}
+        value={form.relationship_type}
+        onChange={(e) => setForm((f) => ({ ...f, relationship_type: e.target.value }))}>
+        {REL_TYPES.map((t) => <option key={t} value={t}>{REL_TYPE_LABELS[t]}</option>)}
+      </select>
+      <select style={selectStyle} value={form.target_dataset_id}
+        onChange={(e) => setForm((f) => ({ ...f, target_dataset_id: e.target.value, target_column: '' }))}>
+        {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.source_filename || ds.name}</option>)}
+      </select>
+      <select style={selectStyle} value={form.target_column}
+        onChange={(e) => setForm((f) => ({ ...f, target_column: e.target.value }))}>
+        <option value="">column...</option>
+        {tgtCols.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+      <Button variant="success" size="sm" disabled={!valid || saving} loading={saving}
+        onClick={() => onSave(form)}>
+        {initial ? 'Save' : 'Add'}
+      </Button>
+      <Button variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+    </div>
+  );
+}
+
 function RelationshipsPanel({ modelId, datasets }) {
   const qc = useQueryClient();
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+
   const { data: relationships = [] } = useQuery({
     queryKey: ['relationships', modelId],
     queryFn: () => listRelationships(modelId),
     enabled: !!modelId,
   });
 
-  const deleteMut = useMutation({
-    mutationFn: (id) => deleteRelationship(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['relationships'] }),
-  });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['relationships'] });
+
+  const deleteMut = useMutation({ mutationFn: (id) => deleteRelationship(id), onSuccess: invalidate });
+  const createMut = useMutation({ mutationFn: (data) => createRelationship(modelId, data), onSuccess: () => { invalidate(); setShowForm(false); } });
+  const updateMut = useMutation({ mutationFn: ({ id, data }) => updateRelationship(id, data), onSuccess: () => { invalidate(); setEditingId(null); } });
 
   const dsNameMap = {};
   for (const ds of datasets) {
     dsNameMap[ds.id] = ds.source_filename || ds.name;
   }
 
-  if (relationships.length === 0) return null;
-
   return (
     <div style={{ ...cardStyle, marginBottom: spacing.xl, padding: spacing.md }}>
-      <h3 style={{
-        margin: `0 0 ${spacing.sm}px`, fontSize: typography.fontSizes.md,
-        fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
-        fontFamily: typography.fontFamily,
-      }}>
-        Relationships
-      </h3>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm }}>
+        <h3 style={{
+          margin: 0, fontSize: typography.fontSizes.md,
+          fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
+          fontFamily: typography.fontFamily,
+        }}>
+          Relationships
+        </h3>
+        {datasets.length >= 2 && !showForm && (
+          <Button variant="ghost" size="sm" onClick={() => setShowForm(true)}>+ Add</Button>
+        )}
+      </div>
+
       <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm }}>
+        {showForm && (
+          <RelationshipForm
+            datasets={datasets}
+            onSave={(data) => createMut.mutate(data)}
+            onCancel={() => setShowForm(false)}
+            saving={createMut.isPending}
+          />
+        )}
         {relationships.map((rel) => (
-          <div
-            key={rel.id}
-            style={{
-              display: 'flex', alignItems: 'center', gap: spacing.md,
-              padding: `${spacing.sm}px ${spacing.md}px`,
-              background: colors.bgMuted, borderRadius: radius.md,
-              fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
-            }}
-          >
-            <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary }}>
-                {dsNameMap[rel.source_dataset_id] || rel.source_dataset_id.slice(0, 8)}
-              </span>
-              <span style={{ fontFamily: 'monospace', color: colors.primary, fontSize: typography.fontSizes.xs }}>
-                .{rel.source_column}
-              </span>
-              <span style={{
-                display: 'inline-block', padding: `1px ${spacing.sm}px`,
-                background: '#ede9fe', color: '#7c3aed', borderRadius: radius.full,
-                fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium,
-              }}>
-                {REL_TYPE_LABELS[rel.relationship_type] || rel.relationship_type}
-              </span>
-              <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary }}>
-                {dsNameMap[rel.target_dataset_id] || rel.target_dataset_id.slice(0, 8)}
-              </span>
-              <span style={{ fontFamily: 'monospace', color: colors.primary, fontSize: typography.fontSizes.xs }}>
-                .{rel.target_column}
-              </span>
-              {rel.coverage_pct != null && (
-                <span style={{ color: colors.textMuted, fontSize: typography.fontSizes.xs }}>
-                  ({Math.round(rel.coverage_pct * 100)}% match)
-                </span>
-              )}
-            </div>
-            <button
-              onClick={() => deleteMut.mutate(rel.id)}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: colors.textMuted, fontSize: 14, padding: spacing.xs,
+          editingId === rel.id ? (
+            <RelationshipForm
+              key={rel.id}
+              datasets={datasets}
+              initial={{
+                source_dataset_id: rel.source_dataset_id,
+                target_dataset_id: rel.target_dataset_id,
+                source_column: rel.source_column,
+                target_column: rel.target_column,
+                relationship_type: rel.relationship_type,
               }}
-              title="Remove relationship"
+              onSave={(data) => updateMut.mutate({ id: rel.id, data })}
+              onCancel={() => setEditingId(null)}
+              saving={updateMut.isPending}
+            />
+          ) : (
+            <div
+              key={rel.id}
+              style={{
+                display: 'flex', alignItems: 'center', gap: spacing.md,
+                padding: `${spacing.sm}px ${spacing.md}px`,
+                background: colors.bgMuted, borderRadius: radius.md,
+                fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
+              }}
             >
-              ×
-            </button>
-          </div>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary }}>
+                  {dsNameMap[rel.source_dataset_id] || rel.source_dataset_id.slice(0, 8)}
+                </span>
+                <span style={{ fontFamily: 'monospace', color: colors.primary, fontSize: typography.fontSizes.xs }}>
+                  .{rel.source_column}
+                </span>
+                <span style={{
+                  display: 'inline-block', padding: `1px ${spacing.sm}px`,
+                  background: '#ede9fe', color: '#7c3aed', borderRadius: radius.full,
+                  fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium,
+                }}>
+                  {REL_TYPE_LABELS[rel.relationship_type] || rel.relationship_type}
+                </span>
+                <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary }}>
+                  {dsNameMap[rel.target_dataset_id] || rel.target_dataset_id.slice(0, 8)}
+                </span>
+                <span style={{ fontFamily: 'monospace', color: colors.primary, fontSize: typography.fontSizes.xs }}>
+                  .{rel.target_column}
+                </span>
+                {rel.coverage_pct != null && (
+                  <span style={{ color: colors.textMuted, fontSize: typography.fontSizes.xs }}>
+                    ({Math.round(rel.coverage_pct * 100)}% match)
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => setEditingId(rel.id)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: colors.textMuted, fontSize: 12, padding: spacing.xs,
+                }}
+                title="Edit relationship"
+              >
+                ✎
+              </button>
+              <button
+                onClick={() => deleteMut.mutate(rel.id)}
+                style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: colors.textMuted, fontSize: 14, padding: spacing.xs,
+                }}
+                title="Remove relationship"
+              >
+                ×
+              </button>
+            </div>
+          )
         ))}
+        {relationships.length === 0 && !showForm && (
+          <div style={{ color: colors.textMuted, fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily }}>
+            No relationships detected. {datasets.length >= 2 ? 'Click "+ Add" to create one manually.' : 'Upload at least two datasets to define relationships.'}
+          </div>
+        )}
       </div>
     </div>
   );

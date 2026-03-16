@@ -5,7 +5,8 @@ import { executePivot } from '../api.js';
 function isConfigValid(config) {
   if (!config) return false;
   if (!config.model_id) return false;
-  if (!config.values || config.values.length === 0) return false;
+  if (!config.dataset_id) return false;
+  if (!config.measures || config.measures.length === 0) return false;
   return true;
 }
 

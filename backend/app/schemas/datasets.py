@@ -55,6 +55,16 @@ class DatasetResponse(BaseModel):
         return v
 
 
+class DatasetColumnUpdate(BaseModel):
+    """Partial update for a dataset column."""
+    column_role: str | None = None
+    canonical_name: str | None = None
+    display_name: str | None = None
+    data_type: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class DimensionInfo(BaseModel):
     field: str
     label: str

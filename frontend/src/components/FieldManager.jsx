@@ -20,7 +20,7 @@ function FieldChip({ field, onRemove, extra, style = {} }) {
       }}
     >
       <span style={{ fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium, color: colors.primary, fontFamily: typography.fontFamily }}>
-        {field.canonical_name || field.name}
+        {field.field || field.canonical_name || field.name}
       </span>
       {extra}
       <button
@@ -40,7 +40,7 @@ function FieldChip({ field, onRemove, extra, style = {} }) {
 function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMultiple = true, aggMap = {}, dimensions = [], measures = [] }) {
   const [open, setOpen] = useState(false);
   const available = (label === 'Values' ? measures : dimensions).filter(
-    (f) => !fields.some((sel) => sel === (f.canonical_name || f.name))
+    (f) => !fields.some((sel) => sel === (f.field || f.canonical_name || f.name))
   );
 
   return (
@@ -68,7 +68,7 @@ function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMult
         )}
         {fields.map((fieldName) => {
           const allFields = [...dimensions, ...measures];
-          const field = allFields.find((f) => (f.canonical_name || f.name) === fieldName) || { name: fieldName };
+          const field = allFields.find((f) => (f.field || f.canonical_name || f.name) === fieldName) || { name: fieldName };
           const agg = aggMap[fieldName] || 'sum';
           return (
             <FieldChip
@@ -116,7 +116,7 @@ function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMult
                 boxShadow: shadows.lg, minWidth: 200, maxHeight: 240, overflowY: 'auto',
               }}>
                 {available.map((f) => {
-                  const name = f.canonical_name || f.name;
+                  const name = f.field || f.canonical_name || f.name;
                   return (
                     <button
                       key={name}
@@ -231,7 +231,7 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {dimensions.map((f) => {
-            const name = f.canonical_name || f.name;
+            const name = f.field || f.canonical_name || f.name;
             return (
               <div key={name} style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, padding: `2px ${spacing.xs}px` }}>
                 <span style={{ color: colors.textMuted, fontSize: 10 }}>⬡</span>
@@ -240,7 +240,7 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
             );
           })}
           {measures.map((f) => {
-            const name = f.canonical_name || f.name;
+            const name = f.field || f.canonical_name || f.name;
             return (
               <div key={name} style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, padding: `2px ${spacing.xs}px` }}>
                 <span style={{ color: colors.success, fontSize: 10 }}>∑</span>

@@ -38,6 +38,8 @@ export const getDataset = (id) => req(`/datasets/${id}`);
 export const deleteDataset = (id) => req(`/datasets/${id}`, { method: 'DELETE' });
 export const confirmMapping = (id, config) =>
   req(`/datasets/${id}/confirm-mapping`, json(config));
+export const updateColumn = (datasetId, columnId, data) =>
+  req(`/datasets/${datasetId}/columns/${columnId}`, { ...json(data), method: 'PATCH' });
 
 // Metadata & Pivot
 export const getMetadata = (modelId) => req(`/models/${modelId}/metadata`);

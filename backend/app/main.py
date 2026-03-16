@@ -29,7 +29,7 @@ logging.basicConfig(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan: create required directories on startup."""
+    """Application lifespan: create required directories and re-register DuckDB views."""
     upload_dir = Path(settings.upload_dir)
     data_dir = Path(settings.data_dir)
 
@@ -38,6 +38,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     logger.info("Upload dir: %s", upload_dir.resolve())
     logger.info("Data dir:   %s", data_dir.resolve())
+
+    # Re-register all active datasets' parquet files in DuckDB
+    # (views are in-memory and lost on restart)
+    try:
+        from app.database import AsyncSessionLocal
+        from app.models.metadata import Dataset
+        from app.duckdb_engine import register_dataset
+        from sqlalchemy import select
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(Dataset).where(
+                    Dataset.status == "active",
+                    Dataset.parquet_path.isnot(None),
+                )
+            )
+            datasets = result.scalars().all()
+            for ds in datasets:
+                try:
+                    register_dataset(ds.id, ds.parquet_path)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to re-register dataset %s (%s): %s",
+                        ds.id, ds.parquet_path, exc,
+                    )
+            logger.info("Re-registered %d active dataset views in DuckDB", len(datasets))
+    except Exception as exc:
+        logger.warning("Could not re-register DuckDB views on startup: %s", exc)
 
     yield
 

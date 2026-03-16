@@ -11,21 +11,22 @@ export function useMetadata(modelId) {
   });
 
   // Flatten datasets' dimensions and measures into top-level arrays
-  // so FieldManager can access metadata.dimensions / metadata.measures directly.
+  // so FieldManager/FilterManager can access metadata.dimensions / metadata.measures.
+  // Each field is tagged with _dataset_name for grouping in the picker.
   const data = useMemo(() => {
     if (!query.data) return undefined;
     const raw = query.data;
     const datasets = raw.datasets || [];
 
-    // Merge dimensions and measures across all datasets, deduplicating by field name
     const dimMap = new Map();
     const measMap = new Map();
     for (const ds of datasets) {
+      const dsName = ds.name || ds.id;
       for (const d of (ds.dimensions || [])) {
-        if (!dimMap.has(d.field)) dimMap.set(d.field, { ...d, dataset_id: ds.id });
+        if (!dimMap.has(d.field)) dimMap.set(d.field, { ...d, _dataset_name: dsName, _dataset_id: ds.id });
       }
       for (const m of (ds.measures || [])) {
-        if (!measMap.has(m.field)) measMap.set(m.field, { ...m, dataset_id: ds.id });
+        if (!measMap.has(m.field)) measMap.set(m.field, { ...m, _dataset_name: dsName, _dataset_id: ds.id });
       }
     }
 

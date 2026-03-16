@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { colors, spacing, radius, typography, transitions, shadows } from '../theme.js';
 import { Button } from './common/Button.jsx';
 
@@ -40,17 +40,24 @@ function FilterChip({ filter, onRemove, onClick }) {
   );
 }
 
-function FilterEditor({ filter, metadata, dimValues, onSave, onCancel, onLoadValues }) {
+function FilterEditor({ filter, metadata, onSave, onCancel }) {
   const [field, setField] = useState(filter?.field || '');
   const [operator, setOperator] = useState(filter?.operator || 'in');
   const [selected, setSelected] = useState(filter?.values || []);
+  const [search, setSearch] = useState('');
   const dimensions = metadata?.dimensions || [];
 
-  React.useEffect(() => {
-    if (field) onLoadValues(field);
-  }, [field]);
+  // Get values from the metadata dimensions (already loaded)
+  const values = useMemo(() => {
+    const dim = dimensions.find((d) => d.field === field);
+    return dim?.values || [];
+  }, [dimensions, field]);
 
-  const values = dimValues[field] || [];
+  const filteredValues = useMemo(() => {
+    if (!search) return values;
+    const lower = search.toLowerCase();
+    return values.filter((v) => String(v).toLowerCase().includes(lower));
+  }, [values, search]);
 
   const toggleValue = (v) => {
     setSelected((prev) =>
@@ -75,7 +82,7 @@ function FilterEditor({ filter, metadata, dimValues, onSave, onCancel, onLoadVal
         </label>
         <select
           value={field}
-          onChange={(e) => { setField(e.target.value); setSelected([]); }}
+          onChange={(e) => { setField(e.target.value); setSelected([]); setSearch(''); }}
           style={{
             width: '100%', padding: `${spacing.xs}px ${spacing.sm}px`,
             border: `1px solid ${colors.border}`, borderRadius: radius.md,
@@ -85,10 +92,9 @@ function FilterEditor({ filter, metadata, dimValues, onSave, onCancel, onLoadVal
           }}
         >
           <option value="">Select field...</option>
-          {dimensions.map((d) => {
-            const name = d.canonical_name || d.name;
-            return <option key={name} value={name}>{name}</option>;
-          })}
+          {dimensions.map((d) => (
+            <option key={d.field} value={d.field}>{d.label || d.field}</option>
+          ))}
         </select>
       </div>
 
@@ -119,16 +125,35 @@ function FilterEditor({ filter, metadata, dimValues, onSave, onCancel, onLoadVal
           <label style={{ display: 'block', fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium, color: colors.textSecondary, marginBottom: spacing.xs, fontFamily: typography.fontFamily }}>
             Values {selected.length > 0 && `(${selected.length} selected)`}
           </label>
+          {values.length > 10 && (
+            <input
+              type="text"
+              placeholder="Search values..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{
+                width: '100%', padding: `${spacing.xs}px ${spacing.sm}px`,
+                border: `1px solid ${colors.border}`, borderRadius: radius.md,
+                fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm,
+                color: colors.textPrimary, background: colors.bgCard, outline: 'none',
+                boxSizing: 'border-box', marginBottom: spacing.xs,
+              }}
+            />
+          )}
           <div style={{
             maxHeight: 160, overflowY: 'auto',
             border: `1px solid ${colors.border}`, borderRadius: radius.md,
           }}>
             {values.length === 0 ? (
               <div style={{ padding: spacing.sm, color: colors.textMuted, fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily }}>
-                Loading values...
+                No values available
+              </div>
+            ) : filteredValues.length === 0 ? (
+              <div style={{ padding: spacing.sm, color: colors.textMuted, fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily }}>
+                No matching values
               </div>
             ) : (
-              values.map((v) => {
+              filteredValues.map((v) => {
                 const str = String(v);
                 return (
                   <label
@@ -168,23 +193,9 @@ function FilterEditor({ filter, metadata, dimValues, onSave, onCancel, onLoadVal
   );
 }
 
-export default function FilterManager({ metadata, filters, onFiltersChange, modelId }) {
+export default function FilterManager({ metadata, filters, onFiltersChange }) {
   const [showEditor, setShowEditor] = useState(false);
   const [editingIndex, setEditingIndex] = useState(null);
-  const [dimValues, setDimValues] = useState({});
-
-  const loadValues = async (field) => {
-    if (dimValues[field]) return;
-    try {
-      const res = await fetch(`/api/models/${modelId}/metadata/values?field=${encodeURIComponent(field)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setDimValues((prev) => ({ ...prev, [field]: data.values || [] }));
-      }
-    } catch {
-      // ignore
-    }
-  };
 
   const addFilter = (filter) => {
     const updated = [...filters, filter];
@@ -241,8 +252,6 @@ export default function FilterManager({ metadata, filters, onFiltersChange, mode
             <FilterEditor
               filter={editingFilter}
               metadata={metadata}
-              dimValues={dimValues}
-              onLoadValues={loadValues}
               onSave={editingIndex !== null ? (f) => updateFilter(editingIndex, f) : addFilter}
               onCancel={() => { setShowEditor(false); setEditingIndex(null); }}
             />

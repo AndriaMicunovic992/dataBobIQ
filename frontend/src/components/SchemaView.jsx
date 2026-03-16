@@ -24,7 +24,7 @@ function RoleSelect({ value, onChange }) {
       onChange={(e) => onChange(e.target.value)}
       style={{
         display: 'inline-block',
-        padding: `2px ${spacing.sm}px`,
+        padding: `2px ${spacing.sm}px 2px ${spacing.sm}px`,
         background: style.bg,
         color: style.color,
         borderRadius: radius.full,
@@ -34,12 +34,6 @@ function RoleSelect({ value, onChange }) {
         border: `1px solid transparent`,
         cursor: 'pointer',
         outline: 'none',
-        appearance: 'none',
-        WebkitAppearance: 'none',
-        paddingRight: spacing.lg,
-        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='${encodeURIComponent(style.color)}' d='M0 2l4 4 4-4z'/%3E%3C/svg%3E")`,
-        backgroundRepeat: 'no-repeat',
-        backgroundPosition: `right ${spacing.xs}px center`,
       }}
     >
       {ROLE_OPTIONS.map((r) => (

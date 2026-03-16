@@ -73,10 +73,10 @@ async def _save_columns(dataset_id: str, columns: list[dict]) -> None:
 
 
 async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
-    """Persist AI mapping config to dataset record."""
+    """Persist AI mapping config to dataset record and update column canonical names."""
     from sqlalchemy import select
 
-    from app.models.metadata import Dataset
+    from app.models.metadata import Dataset, DatasetColumn
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Dataset).where(Dataset.id == dataset_id))
@@ -84,6 +84,21 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
         if dataset:
             dataset.mapping_config = mapping_config
             dataset.ai_analyzed = True
+
+            # Apply AI-suggested canonical names to DatasetColumn records
+            mappings = mapping_config.get("mappings", [])
+            if mappings:
+                col_result = await db.execute(
+                    select(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id)
+                )
+                db_columns = col_result.scalars().all()
+                col_by_source = {c.source_name: c for c in db_columns}
+                for m in mappings:
+                    src = m.get("source", "")
+                    tgt = m.get("target", "")
+                    if src in col_by_source and tgt:
+                        col_by_source[src].canonical_name = tgt
+
             await db.commit()
 
 

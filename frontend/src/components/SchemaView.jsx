@@ -1,25 +1,53 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listDatasets, deleteDataset, confirmMapping } from '../api.js';
+import { listDatasets, deleteDataset, confirmMapping, updateColumn } from '../api.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
 import { Button } from './common/Button.jsx';
 import { Badge, StatusBadge } from './common/Badge.jsx';
 import { Card } from './common/Card.jsx';
 import { Table } from './common/Table.jsx';
 
+const ROLE_OPTIONS = ['attribute', 'measure', 'time', 'key'];
+
 const ROLE_COLORS = {
-  dimension: { bg: colors.primaryLight, color: colors.primary },
+  attribute: { bg: colors.primaryLight, color: colors.primary },
   measure: { bg: colors.successLight, color: '#059669' },
-  date: { bg: colors.warningLight, color: '#d97706' },
-  identifier: { bg: '#ede9fe', color: '#7c3aed' },
+  time: { bg: colors.warningLight, color: '#d97706' },
+  key: { bg: '#ede9fe', color: '#7c3aed' },
 };
 
-const TIER_LABELS = {
-  core: { label: 'Core', variant: 'primary' },
-  expected: { label: 'Expected', variant: 'success' },
-  extension: { label: 'Extension', variant: 'muted' },
-  unmapped: { label: 'Unmapped', variant: 'warning' },
-};
+function RoleSelect({ value, onChange }) {
+  const style = ROLE_COLORS[value] || { bg: colors.bgHover, color: colors.textMuted };
+  return (
+    <select
+      value={value || 'attribute'}
+      onChange={(e) => onChange(e.target.value)}
+      style={{
+        display: 'inline-block',
+        padding: `2px ${spacing.sm}px`,
+        background: style.bg,
+        color: style.color,
+        borderRadius: radius.full,
+        fontSize: typography.fontSizes.xs,
+        fontWeight: typography.fontWeights.medium,
+        fontFamily: typography.fontFamily,
+        border: `1px solid transparent`,
+        cursor: 'pointer',
+        outline: 'none',
+        appearance: 'none',
+        WebkitAppearance: 'none',
+        paddingRight: spacing.lg,
+        backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8' viewBox='0 0 8 8'%3E%3Cpath fill='${encodeURIComponent(style.color)}' d='M0 2l4 4 4-4z'/%3E%3C/svg%3E")`,
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: `right ${spacing.xs}px center`,
+      }}
+    >
+      {ROLE_OPTIONS.map((r) => (
+        <option key={r} value={r}>{r}</option>
+      ))}
+    </select>
+  );
+}
 
 function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
   const qc = useQueryClient();
@@ -30,6 +58,11 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
 
   const confirmMut = useMutation({
     mutationFn: (config) => confirmMapping(dataset.id, config),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['datasets'] }),
+  });
+
+  const updateColMut = useMutation({
+    mutationFn: ({ columnId, data }) => updateColumn(dataset.id, columnId, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['datasets'] }),
   });
 
@@ -45,10 +78,10 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
     },
     {
       key: 'canonical_name', label: 'Mapped As',
-      render: (v, row) => v ? (
+      render: (v) => v ? (
         <span style={{ fontFamily: 'monospace', fontSize: typography.fontSizes.sm, color: colors.primary }}>{v}</span>
       ) : (
-        <span style={{ color: colors.textMuted, fontSize: typography.fontSizes.sm }}>— unmapped —</span>
+        <span style={{ color: colors.textMuted, fontSize: typography.fontSizes.sm, fontStyle: 'italic' }}>same as source</span>
       ),
     },
     {
@@ -57,26 +90,12 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
     },
     {
       key: 'column_role', label: 'Role',
-      render: (v) => {
-        const style = ROLE_COLORS[v] || { bg: colors.bgHover, color: colors.textMuted };
-        return (
-          <span style={{
-            display: 'inline-block', padding: `2px ${spacing.sm}px`,
-            background: style.bg, color: style.color,
-            borderRadius: radius.full, fontSize: typography.fontSizes.xs,
-            fontWeight: typography.fontWeights.medium, fontFamily: typography.fontFamily,
-          }}>
-            {v || 'unknown'}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'column_tier', label: 'Tier',
-      render: (v) => {
-        const t = TIER_LABELS[v] || { label: v || '?', variant: 'default' };
-        return <Badge variant={t.variant}>{t.label}</Badge>;
-      },
+      render: (v, row) => (
+        <RoleSelect
+          value={v}
+          onChange={(newRole) => updateColMut.mutate({ columnId: row.id, data: { column_role: newRole } })}
+        />
+      ),
     },
   ];
 

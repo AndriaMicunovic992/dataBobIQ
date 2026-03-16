@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { listKPIs, evaluateKPIs } from '../api.js';
+import { listKPIs } from '../api.js';
 import { useMetadata } from '../hooks/useMetadata.js';
 import { usePivot } from '../hooks/usePivot.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
@@ -25,24 +25,41 @@ export default function PivotView({ modelId }) {
   });
 
   const { data: metadata, isLoading: metaLoading } = useMetadata(modelId);
-  const { data: pivotData, isLoading: pivotLoading, error: pivotError } = usePivot(pivotConfig);
+
+  // Pick the first dataset_id from metadata for pivot queries
+  const datasetId = useMemo(() => {
+    if (!metadata?.datasets?.length) return null;
+    return metadata.datasets[0].id;
+  }, [metadata]);
+
+  // Build the API-shaped pivot request from UI config
+  const apiConfig = useMemo(() => {
+    if (!datasetId || pivotConfig.values.length === 0) return null;
+    return {
+      model_id: modelId,
+      dataset_id: datasetId,
+      row_dimensions: pivotConfig.rows,
+      column_dimension: pivotConfig.columns[0] || null,
+      measures: pivotConfig.values.map((v) => ({
+        field: v,
+        aggregation: pivotConfig.aggregations[v] || 'sum',
+      })),
+      filters: (pivotConfig.filters || []).reduce((acc, f) => {
+        if (f.field && f.values?.length) acc[f.field] = f.values;
+        return acc;
+      }, {}),
+      scenario_ids: [],
+      limit: pivotConfig.limit || 500,
+    };
+  }, [modelId, datasetId, pivotConfig]);
+
+  const { data: pivotData, isLoading, error } = usePivot(apiConfig);
 
   const { data: kpis = [] } = useQuery({
     queryKey: ['kpis', modelId],
     queryFn: () => listKPIs(modelId),
     enabled: !!modelId,
   });
-
-  // Build pivot values spec for the API
-  const effectiveConfig = useMemo(() => {
-    const valuesSpec = pivotConfig.values.map((v) => ({
-      field: v,
-      aggregation: pivotConfig.aggregations[v] || 'sum',
-    }));
-    return { ...pivotConfig, values: valuesSpec };
-  }, [pivotConfig]);
-
-  const { data: effectivePivotData, isLoading, error } = usePivot(effectiveConfig);
 
   const handleConfigChange = (patch) => {
     setPivotConfig((prev) => ({ ...prev, ...patch, model_id: modelId }));
@@ -134,10 +151,10 @@ export default function PivotView({ modelId }) {
           ) : (
             <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
               {viewMode === 'table' ? (
-                <PivotTable data={effectivePivotData} loading={isLoading} error={error} />
+                <PivotTable data={pivotData} loading={isLoading} error={error} />
               ) : (
                 <div style={{ padding: spacing.md }}>
-                  <PivotChart data={effectivePivotData} stacked={stacked} />
+                  <PivotChart data={pivotData} stacked={stacked} />
                 </div>
               )}
             </div>

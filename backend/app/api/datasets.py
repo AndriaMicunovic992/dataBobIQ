@@ -13,7 +13,7 @@ from app.config import settings
 from app.database import get_db
 from app.duckdb_engine import unregister_dataset
 from app.models.metadata import Dataset, DatasetColumn, Model
-from app.schemas.datasets import DatasetResponse
+from app.schemas.datasets import DatasetColumnUpdate, DatasetResponse
 from app.services.ingestion import confirm_mapping_and_materialize, process_upload
 
 logger = logging.getLogger(__name__)
@@ -222,4 +222,39 @@ async def confirm_mapping(
         .where(Dataset.id == dataset_id)
     )
     dataset = result.unique().scalar_one()
+    return DatasetResponse.model_validate(dataset)
+
+
+@router.patch("/datasets/{dataset_id}/columns/{column_id}", response_model=DatasetResponse)
+async def update_column(
+    dataset_id: str,
+    column_id: str,
+    body: DatasetColumnUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> DatasetResponse:
+    """Update a column's role or canonical name."""
+    result = await db.execute(
+        select(DatasetColumn).where(
+            DatasetColumn.id == column_id,
+            DatasetColumn.dataset_id == dataset_id,
+        )
+    )
+    column = result.scalar_one_or_none()
+    if column is None:
+        raise HTTPException(status_code=404, detail=f"Column {column_id} not found")
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(column, field, value)
+
+    await db.commit()
+    logger.info("Updated column %s on dataset %s: %s", column_id, dataset_id, update_data)
+
+    # Return full dataset with columns
+    ds_result = await db.execute(
+        select(Dataset)
+        .options(selectinload(Dataset.columns))
+        .where(Dataset.id == dataset_id)
+    )
+    dataset = ds_result.unique().scalar_one()
     return DatasetResponse.model_validate(dataset)

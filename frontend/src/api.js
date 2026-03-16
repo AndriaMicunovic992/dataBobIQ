@@ -41,6 +41,10 @@ export const confirmMapping = (id, config) =>
 export const updateColumn = (datasetId, columnId, data) =>
   req(`/datasets/${datasetId}/columns/${columnId}`, { ...json(data), method: 'PATCH' });
 
+// Relationships
+export const listRelationships = (modelId) => req(`/models/${modelId}/relationships`);
+export const deleteRelationship = (id) => req(`/relationships/${id}`, { method: 'DELETE' });
+
 // Metadata & Pivot
 export const getMetadata = (modelId) => req(`/models/${modelId}/metadata`);
 export const executePivot = (config) => req('/pivot', json(config));

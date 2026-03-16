@@ -89,6 +89,20 @@ class DatasetMetadata(BaseModel):
     dimensions: list[DimensionInfo]
 
 
+class RelationshipResponse(BaseModel):
+    id: str
+    model_id: str
+    source_dataset_id: str
+    target_dataset_id: str
+    source_column: str
+    target_column: str
+    relationship_type: str
+    coverage_pct: float | None = None
+    created_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MetadataResponse(BaseModel):
     model_id: str
     datasets: list[DatasetMetadata]

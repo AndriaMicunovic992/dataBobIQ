@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.duckdb_engine import unregister_dataset
-from app.models.metadata import Dataset, DatasetColumn, Model
-from app.schemas.datasets import DatasetColumnUpdate, DatasetResponse
+from app.models.metadata import Dataset, DatasetColumn, DatasetRelationship, Model
+from app.schemas.datasets import DatasetColumnUpdate, DatasetResponse, RelationshipResponse
 from app.services.ingestion import confirm_mapping_and_materialize, process_upload
 
 logger = logging.getLogger(__name__)
@@ -258,3 +258,35 @@ async def update_column(
     )
     dataset = ds_result.unique().scalar_one()
     return DatasetResponse.model_validate(dataset)
+
+
+@router.get(
+    "/models/{model_id}/relationships",
+    response_model=list[RelationshipResponse],
+)
+async def list_relationships(
+    model_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> list[RelationshipResponse]:
+    """List all detected relationships between datasets in a model."""
+    result = await db.execute(
+        select(DatasetRelationship).where(DatasetRelationship.model_id == model_id)
+    )
+    rels = result.scalars().all()
+    return [RelationshipResponse.model_validate(r) for r in rels]
+
+
+@router.delete("/relationships/{relationship_id}", status_code=204)
+async def delete_relationship(
+    relationship_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a relationship."""
+    result = await db.execute(
+        select(DatasetRelationship).where(DatasetRelationship.id == relationship_id)
+    )
+    rel = result.scalar_one_or_none()
+    if rel is None:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    await db.delete(rel)
+    await db.commit()

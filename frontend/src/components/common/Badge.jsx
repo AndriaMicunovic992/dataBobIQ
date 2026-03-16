@@ -54,6 +54,10 @@ export function Badge({ children, variant = 'default', size = 'sm', style = {}, 
   );
 }
 
+const PROCESSING_STATUSES = new Set([
+  'queued', 'parsing', 'parsed', 'mapping', 'materializing',
+]);
+
 // Convenience status badge
 export function StatusBadge({ status }) {
   const statusVariants = {
@@ -69,9 +73,41 @@ export function StatusBadge({ status }) {
     actuals: 'primary',
     budget: 'info',
     forecast: 'warning',
+    queued: 'warning',
+    parsing: 'warning',
+    parsed: 'warning',
+    mapping: 'warning',
+    materializing: 'warning',
+    mapped_pending_review: 'info',
   };
   const variant = statusVariants[status] || 'default';
-  return <Badge variant={variant} dot>{status}</Badge>;
+  const isProcessing = PROCESSING_STATUSES.has(status);
+
+  return (
+    <Badge variant={variant} dot={!isProcessing}>
+      {isProcessing && <Spinner size={10} />}
+      {status}
+    </Badge>
+  );
+}
+
+function Spinner({ size = 12 }) {
+  return (
+    <>
+      <span
+        style={{
+          display: 'inline-block',
+          width: size, height: size,
+          border: `2px solid currentColor`,
+          borderTopColor: 'transparent',
+          borderRadius: '50%',
+          animation: 'badge-spin 0.7s linear infinite',
+          flexShrink: 0,
+        }}
+      />
+      <style>{`@keyframes badge-spin { to { transform: rotate(360deg); } }`}</style>
+    </>
+  );
 }
 
 export default Badge;

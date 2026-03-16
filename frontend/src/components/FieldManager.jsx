@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { colors, spacing, radius, typography, transitions, shadows } from '../theme.js';
 import { Badge } from './common/Badge.jsx';
 
@@ -20,7 +20,7 @@ function FieldChip({ field, onRemove, extra, style = {} }) {
       }}
     >
       <span style={{ fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium, color: colors.primary, fontFamily: typography.fontFamily }}>
-        {field.field || field.canonical_name || field.name}
+        {field.label || field.field || field.name}
       </span>
       {extra}
       <button
@@ -37,11 +37,113 @@ function FieldChip({ field, onRemove, extra, style = {} }) {
   );
 }
 
-function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMultiple = true, aggMap = {}, dimensions = [], measures = [] }) {
-  const [open, setOpen] = useState(false);
-  const available = (label === 'Values' ? measures : dimensions).filter(
-    (f) => !fields.some((sel) => sel === (f.field || f.canonical_name || f.name))
+function FieldPicker({ available, onSelect, onClose, grouped = {} }) {
+  const [search, setSearch] = useState('');
+
+  const filtered = useMemo(() => {
+    if (!search) return grouped;
+    const lower = search.toLowerCase();
+    const result = {};
+    for (const [table, fields] of Object.entries(grouped)) {
+      const match = fields.filter((f) => {
+        const name = f.field || f.label || '';
+        return name.toLowerCase().includes(lower);
+      });
+      if (match.length > 0) result[table] = match;
+    }
+    return result;
+  }, [grouped, search]);
+
+  const entries = Object.entries(filtered);
+  const totalCount = entries.reduce((s, [, fs]) => s + fs.length, 0);
+
+  return (
+    <div style={{
+      position: 'absolute', top: 28, left: 0, zIndex: 50,
+      background: colors.bgCard, borderRadius: radius.md, border: `1px solid ${colors.border}`,
+      boxShadow: shadows.lg, minWidth: 220, maxHeight: 300, display: 'flex', flexDirection: 'column',
+    }}>
+      <div style={{ padding: `${spacing.xs}px ${spacing.sm}px`, borderBottom: `1px solid ${colors.border}` }}>
+        <input
+          type="text"
+          placeholder="Search fields..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          autoFocus
+          style={{
+            width: '100%', border: 'none', outline: 'none',
+            fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
+            color: colors.textPrimary, background: 'transparent',
+            padding: `${spacing.xs}px 0`, boxSizing: 'border-box',
+          }}
+        />
+      </div>
+      <div style={{ overflowY: 'auto', flex: 1 }}>
+        {totalCount === 0 && (
+          <div style={{ padding: spacing.sm, color: colors.textMuted, fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily }}>
+            No matching fields
+          </div>
+        )}
+        {entries.map(([tableName, fields]) => (
+          <div key={tableName}>
+            {entries.length > 1 && (
+              <div style={{
+                padding: `${spacing.xs}px ${spacing.sm}px`,
+                fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.semibold,
+                color: colors.textMuted, fontFamily: typography.fontFamily,
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+                background: colors.bgMuted, borderBottom: `1px solid ${colors.border}`,
+              }}>
+                {tableName}
+              </div>
+            )}
+            {fields.map((f) => {
+              const name = f.field || f.label;
+              return (
+                <button
+                  key={name}
+                  onClick={() => { onSelect(name); onClose(); }}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: spacing.xs, width: '100%',
+                    padding: `${spacing.xs}px ${spacing.sm}px`,
+                    background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer',
+                    fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
+                    color: colors.textPrimary,
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = colors.bgHover}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                >
+                  <span style={{ fontFamily: 'monospace', fontSize: typography.fontSizes.xs, color: colors.textMuted }}>
+                    {f.column_role === 'measure' ? '∑' : '⬡'}
+                  </span>
+                  <span>{f.label || name}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+    </div>
   );
+}
+
+function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMultiple = true, aggMap = {}, dimensions = [], measures = [], datasets = [] }) {
+  const [open, setOpen] = useState(false);
+  const pool = label === 'Values' ? measures : dimensions;
+  const available = pool.filter(
+    (f) => !fields.some((sel) => sel === (f.field || f.name))
+  );
+
+  // Group available fields by dataset name
+  const grouped = useMemo(() => {
+    const groups = {};
+    for (const f of available) {
+      const dsName = f._dataset_name || 'Fields';
+      if (!groups[dsName]) groups[dsName] = [];
+      groups[dsName].push(f);
+    }
+    return groups;
+  }, [available]);
 
   return (
     <div style={{ marginBottom: spacing.md }}>
@@ -68,7 +170,7 @@ function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMult
         )}
         {fields.map((fieldName) => {
           const allFields = [...dimensions, ...measures];
-          const field = allFields.find((f) => (f.field || f.canonical_name || f.name) === fieldName) || { name: fieldName };
+          const field = allFields.find((f) => (f.field || f.name) === fieldName) || { name: fieldName };
           const agg = aggMap[fieldName] || 'sum';
           return (
             <FieldChip
@@ -110,34 +212,12 @@ function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMult
               +
             </button>
             {open && (
-              <div style={{
-                position: 'absolute', top: 28, left: 0, zIndex: 50,
-                background: colors.bgCard, borderRadius: radius.md, border: `1px solid ${colors.border}`,
-                boxShadow: shadows.lg, minWidth: 200, maxHeight: 240, overflowY: 'auto',
-              }}>
-                {available.map((f) => {
-                  const name = f.field || f.canonical_name || f.name;
-                  return (
-                    <button
-                      key={name}
-                      onClick={() => { onAdd(name); setOpen(false); }}
-                      style={{
-                        display: 'block', width: '100%', padding: `${spacing.sm}px ${spacing.md}px`,
-                        background: 'none', border: 'none', textAlign: 'left', cursor: 'pointer',
-                        fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily,
-                        color: colors.textPrimary,
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.background = colors.bgHover}
-                      onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
-                    >
-                      <span style={{ fontFamily: 'monospace', fontSize: typography.fontSizes.xs, color: colors.textMuted, marginRight: spacing.xs }}>
-                        {f.column_role === 'measure' ? '∑' : '⬡'}
-                      </span>
-                      {name}
-                    </button>
-                  );
-                })}
-              </div>
+              <FieldPicker
+                available={available}
+                grouped={grouped}
+                onSelect={onAdd}
+                onClose={() => setOpen(false)}
+              />
             )}
           </div>
         )}
@@ -157,6 +237,7 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
 
   const dimensions = metadata.dimensions || [];
   const measures = metadata.measures || [];
+  const datasets = metadata.datasets || [];
   const rows = pivotConfig.rows || [];
   const columns = pivotConfig.columns || [];
   const values = pivotConfig.values || [];
@@ -198,6 +279,7 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
         allowMultiple
         dimensions={dimensions}
         measures={measures}
+        datasets={datasets}
       />
 
       <DropZone
@@ -209,6 +291,7 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
         allowMultiple={false}
         dimensions={dimensions}
         measures={measures}
+        datasets={datasets}
       />
 
       <DropZone
@@ -222,34 +305,8 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
         aggMap={aggMap}
         dimensions={dimensions}
         measures={measures}
+        datasets={datasets}
       />
-
-      {/* Available fields reference */}
-      <div style={{ marginTop: spacing.md, paddingTop: spacing.md, borderTop: `1px solid ${colors.border}` }}>
-        <div style={{ fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.semibold, color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: '0.06em', fontFamily: typography.fontFamily, marginBottom: spacing.sm }}>
-          Available Fields
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {dimensions.map((f) => {
-            const name = f.field || f.canonical_name || f.name;
-            return (
-              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, padding: `2px ${spacing.xs}px` }}>
-                <span style={{ color: colors.textMuted, fontSize: 10 }}>⬡</span>
-                <span style={{ fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily, color: colors.textSecondary }}>{name}</span>
-              </div>
-            );
-          })}
-          {measures.map((f) => {
-            const name = f.field || f.canonical_name || f.name;
-            return (
-              <div key={name} style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, padding: `2px ${spacing.xs}px` }}>
-                <span style={{ color: colors.success, fontSize: 10 }}>∑</span>
-                <span style={{ fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily, color: colors.textSecondary }}>{name}</span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
 }

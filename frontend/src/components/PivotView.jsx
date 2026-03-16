@@ -113,7 +113,6 @@ export default function PivotView({ modelId }) {
               metadata={metadata}
               filters={pivotConfig.filters}
               onFiltersChange={handleFiltersChange}
-              modelId={modelId}
             />
           </div>
           <div style={{ display: 'flex', gap: spacing.xs, flexShrink: 0 }}>

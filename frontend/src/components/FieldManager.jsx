@@ -243,21 +243,20 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
   const values = pivotConfig.values || [];
   const aggMap = pivotConfig.aggregations || {};
 
-  // Determine which dataset is "active" based on already-selected fields.
-  // Once a user picks a field, lock to that dataset so we don't mix columns.
+  // Determine which dataset owns the measures (the "fact" table).
+  // Lock measures to that dataset, but show dimensions from ALL datasets
+  // so users can group by lookup/hierarchy columns via relationships.
   const fieldDatasetMap = metadata.fieldDatasetMap || {};
-  const allSelected = [...values, ...rows, ...columns];
-  let activeDatasetId = null;
-  for (const f of allSelected) {
-    if (fieldDatasetMap[f]) { activeDatasetId = fieldDatasetMap[f]; break; }
+  let factDatasetId = null;
+  for (const f of values) {
+    if (fieldDatasetMap[f]) { factDatasetId = fieldDatasetMap[f]; break; }
   }
 
-  // Filter dimensions/measures to the active dataset (or show all if nothing selected)
-  const dimensions = activeDatasetId
-    ? allDimensions.filter((d) => d._dataset_id === activeDatasetId)
-    : allDimensions;
-  const measures = activeDatasetId
-    ? allMeasures.filter((m) => m._dataset_id === activeDatasetId)
+  // Dimensions: always show all (cross-dataset grouping via JOINs)
+  const dimensions = allDimensions;
+  // Measures: lock to the fact dataset once one is selected
+  const measures = factDatasetId
+    ? allMeasures.filter((m) => m._dataset_id === factDatasetId)
     : allMeasures;
 
   const update = (patch) => onConfigChange({ ...pivotConfig, ...patch });

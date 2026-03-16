@@ -78,10 +78,72 @@ def _get_pivot_values(dataset_id: str, column_dimension: str, filters: dict) -> 
     return [str(r[column_dimension]) for r in rows if r[column_dimension] is not None]
 
 
+def _build_join_clauses(
+    dataset_id: str,
+    join_dimensions: dict[str, str] | None,
+    relationships: list | None,
+) -> tuple[str, dict[str, str]]:
+    """Build LEFT JOIN clauses for cross-dataset dimensions.
+
+    Returns (join_sql, alias_map) where alias_map maps dimension field → table alias
+    so we can qualify column references in SELECT/GROUP BY.
+    """
+    if not join_dimensions or not relationships:
+        return "", {}
+
+    join_parts: list[str] = []
+    alias_map: dict[str, str] = {}  # dim field → alias
+    joined_datasets: dict[str, str] = {}  # dataset_id → alias
+
+    for dim_field, dim_ds_id in join_dimensions.items():
+        if dim_ds_id in joined_datasets:
+            alias_map[dim_field] = joined_datasets[dim_ds_id]
+            continue
+
+        # Find a relationship connecting the fact table to this dataset
+        rel = None
+        for r in relationships:
+            if r.source_dataset_id == dataset_id and r.target_dataset_id == dim_ds_id:
+                rel = r
+                break
+            if r.target_dataset_id == dataset_id and r.source_dataset_id == dim_ds_id:
+                rel = r
+                break
+
+        if not rel:
+            logger.warning(
+                "No relationship found to join dataset %s for dimension %s — skipping",
+                dim_ds_id, dim_field,
+            )
+            continue
+
+        alias = f"j{len(joined_datasets)}"
+        joined_datasets[dim_ds_id] = alias
+        alias_map[dim_field] = alias
+
+        target_view = view_name_for(dim_ds_id)
+        fact_view = view_name_for(dataset_id)
+
+        # Determine join columns
+        if rel.source_dataset_id == dataset_id:
+            fact_col = _quote(rel.source_column)
+            lookup_col = _quote(rel.target_column)
+        else:
+            fact_col = _quote(rel.target_column)
+            lookup_col = _quote(rel.source_column)
+
+        join_parts.append(
+            f"LEFT JOIN {target_view} AS {alias} ON f.{fact_col} = {alias}.{lookup_col}"
+        )
+
+    return " ".join(join_parts), alias_map
+
+
 def build_pivot_sql(
     request: PivotRequest,
     dataset_id: str,
     scenario_ids: list[str] | None = None,
+    relationships: list | None = None,
 ) -> tuple[str, list[Any]]:
     """Build DuckDB SQL for a pivot query.
 
@@ -95,20 +157,42 @@ def build_pivot_sql(
     filter_clause, filter_params = _build_filter_clause(filters)
     params: list[Any] = list(filter_params)
 
+    # Build JOINs for cross-dataset dimensions
+    join_sql, alias_map = _build_join_clauses(
+        dataset_id, request.join_dimensions, relationships,
+    )
+    # When we have JOINs, alias the fact table as "f"
+    use_aliases = bool(alias_map)
+
     # --- SELECT expressions ---
     select_parts: list[str] = []
     column_infos: list[ColumnInfo] = []
 
-    # Row dimensions
+    # Row dimensions — qualify with alias if from a joined dataset
     for dim in request.row_dimensions:
-        col = _quote(dim)
-        select_parts.append(col)
+        col_name = _validate_identifier(dim)
+        if dim in alias_map:
+            select_parts.append(f'{alias_map[dim]}."{col_name}"')
+        elif use_aliases:
+            select_parts.append(f'f."{col_name}"')
+        else:
+            select_parts.append(_quote(dim))
         column_infos.append(ColumnInfo(field=dim, type="dimension"))
 
-    # Measures — flat aggregation
+    # Measures — flat aggregation (always from fact table)
+    def _qualify_measure(m: MeasureDef) -> str:
+        col_name = _validate_identifier(m.field)
+        prefix = "f." if use_aliases else ""
+        col = f'{prefix}"{col_name}"'
+        agg = m.aggregation.upper()
+        allowed_aggs = {"SUM", "AVG", "COUNT", "MIN", "MAX"}
+        if agg not in allowed_aggs:
+            raise ValueError(f"Unsupported aggregation: {m.aggregation!r}")
+        return f"{agg}({col})"
+
     if not request.column_dimension:
         for m in request.measures:
-            expr = _agg_expr(m)
+            expr = _qualify_measure(m)
             label = m.label or f"{m.field}_{m.aggregation}"
             select_parts.append(f"{expr} AS {_quote(label)}")
             column_infos.append(ColumnInfo(field=label, type="measure"))
@@ -119,27 +203,37 @@ def build_pivot_sql(
         for pval in pivot_values:
             for m in request.measures:
                 agg = m.aggregation.upper()
-                col = _quote(m.field)
-                col_dim_q = _quote(col_dim)
-                # Use positional param for the value
+                col_name = _validate_identifier(m.field)
+                prefix = "f." if use_aliases else ""
+                col = f'{prefix}"{col_name}"'
+                col_dim_name = _validate_identifier(col_dim)
+                col_dim_q = f'{prefix}"{col_dim_name}"'
                 expr = f"{agg}(CASE WHEN {col_dim_q} = ? THEN {col} END)"
                 params.append(pval)
                 label = f"{pval}__{m.field}"
                 select_parts.append(f"{expr} AS {_quote(label)}")
                 column_infos.append(ColumnInfo(field=label, type="measure"))
 
-    # --- GROUP BY ---
-    group_by_parts = [_quote(d) for d in request.row_dimensions]
+    # --- GROUP BY (must match SELECT expressions for dimensions) ---
+    group_by_parts: list[str] = []
+    for dim in request.row_dimensions:
+        col_name = _validate_identifier(dim)
+        if dim in alias_map:
+            group_by_parts.append(f'{alias_map[dim]}."{col_name}"')
+        elif use_aliases:
+            group_by_parts.append(f'f."{col_name}"')
+        else:
+            group_by_parts.append(_quote(dim))
 
     # --- WHERE ---
     where_sql = f"WHERE {filter_clause}" if filter_clause else ""
 
-    # --- Scenario overlay ---
-    # If scenario_ids provided, UNION actuals + scenario deltas with COALESCE
-    # For MVP, we query the base view and the scenario overlays are stored separately.
-    # We build a CTE that merges them.
+    # --- FROM clause with optional JOINs ---
     scenario_cte = ""
-    from_clause = view
+    if use_aliases:
+        from_clause = f"{view} AS f {join_sql}"
+    else:
+        from_clause = view
 
     if scenario_ids:
         # Build UNION ALL of base + scenarios, each stamped with data_layer
@@ -195,12 +289,13 @@ def execute_pivot(
     request: PivotRequest,
     dataset_id: str,
     scenario_ids: list[str] | None = None,
+    relationships: list | None = None,
 ) -> PivotResponse:
     """Build and execute the pivot query, returning a PivotResponse."""
     t0 = time.perf_counter()
 
     # Build SELECT
-    sql, params = build_pivot_sql(request, dataset_id, scenario_ids)
+    sql, params = build_pivot_sql(request, dataset_id, scenario_ids, relationships)
     logger.debug("Pivot SQL: %s | params=%s", sql, params)
 
     rows = execute_query(sql, params if params else None)

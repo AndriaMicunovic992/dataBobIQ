@@ -26,6 +26,9 @@ class PivotRequest(BaseModel):
     include_totals: bool = False
     limit: int = Field(default=500, le=5000)
     offset: int = 0
+    # Maps dimension field name → dataset_id for dimensions from related datasets.
+    # When present, the pivot engine will JOIN the related dataset via relationships.
+    join_dimensions: dict[str, str] | None = None
 
 
 class ColumnInfo(BaseModel):

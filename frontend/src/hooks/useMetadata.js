@@ -20,17 +20,22 @@ export function useMetadata(modelId) {
 
     const dimMap = new Map();
     const measMap = new Map();
-    // Build a field→dataset_id lookup so pivot knows which dataset owns each field
+    // Build a field→dataset_id lookup so pivot knows which dataset owns each field.
+    // First-seen wins (matches dimMap/measMap dedup logic).
     const fieldDatasetMap = {};
     for (const ds of datasets) {
       const dsName = ds.name || ds.id;
       for (const d of (ds.dimensions || [])) {
-        if (!dimMap.has(d.field)) dimMap.set(d.field, { ...d, _dataset_name: dsName, _dataset_id: ds.id });
-        fieldDatasetMap[d.field] = ds.id;
+        if (!dimMap.has(d.field)) {
+          dimMap.set(d.field, { ...d, _dataset_name: dsName, _dataset_id: ds.id });
+          fieldDatasetMap[d.field] = ds.id;
+        }
       }
       for (const m of (ds.measures || [])) {
-        if (!measMap.has(m.field)) measMap.set(m.field, { ...m, _dataset_name: dsName, _dataset_id: ds.id });
-        fieldDatasetMap[m.field] = ds.id;
+        if (!measMap.has(m.field)) {
+          measMap.set(m.field, { ...m, _dataset_name: dsName, _dataset_id: ds.id });
+          fieldDatasetMap[m.field] = ds.id;
+        }
       }
     }
 

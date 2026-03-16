@@ -13,12 +13,36 @@ logger = logging.getLogger(__name__)
 # concurrent FastAPI requests never share state.
 _local = threading.local()
 
+# Global registry of dataset_id → parquet_path so new threads can auto-register.
+_registered_datasets: dict[str, str] = {}
+_registry_lock = threading.Lock()
+
 
 def get_duckdb_conn() -> duckdb.DuckDBPyConnection:
-    """Return (or create) a thread-local DuckDB connection."""
+    """Return (or create) a thread-local DuckDB connection.
+
+    On first access from a new thread, re-registers all known dataset views
+    so they are available for queries.
+    """
     if not hasattr(_local, "conn") or _local.conn is None:
         logger.debug("Creating new thread-local DuckDB connection (thread=%s)", threading.current_thread().name)
         _local.conn = duckdb.connect(database=":memory:", read_only=False)
+        _local.registered = set()
+    # Ensure all known datasets are registered in this thread's connection
+    with _registry_lock:
+        missing = set(_registered_datasets.keys()) - getattr(_local, "registered", set())
+    for ds_id in missing:
+        path = _registered_datasets.get(ds_id)
+        if path:
+            quoted = view_name_for(ds_id)
+            try:
+                _local.conn.execute(
+                    f"CREATE OR REPLACE VIEW {quoted} AS "
+                    f"SELECT * FROM read_parquet('{path}')"
+                )
+                _local.registered.add(ds_id)
+            except Exception:
+                logger.warning("Failed to auto-register view %s on thread %s", quoted, threading.current_thread().name)
     return _local.conn
 
 
@@ -36,7 +60,11 @@ def register_dataset(dataset_id: str, parquet_path: str) -> None:
 
     The view is created (or replaced) so that subsequent queries can reference
     the dataset by its stable view name without re-specifying the file path.
+    Also records the mapping globally so new threads auto-register the view.
     """
+    with _registry_lock:
+        _registered_datasets[dataset_id] = parquet_path
+
     quoted = view_name_for(dataset_id)
     sql = (
         f"CREATE OR REPLACE VIEW {quoted} AS "
@@ -44,15 +72,23 @@ def register_dataset(dataset_id: str, parquet_path: str) -> None:
     )
     conn = get_duckdb_conn()
     conn.execute(sql)
+    if not hasattr(_local, "registered"):
+        _local.registered = set()
+    _local.registered.add(dataset_id)
     logger.info("Registered dataset view %s -> %s", quoted, parquet_path)
 
 
 def unregister_dataset(dataset_id: str) -> None:
     """Drop the DuckDB view for the given dataset, if it exists."""
+    with _registry_lock:
+        _registered_datasets.pop(dataset_id, None)
+
     quoted = view_name_for(dataset_id)
     conn = get_duckdb_conn()
     try:
         conn.execute(f"DROP VIEW IF EXISTS {quoted}")
+        if hasattr(_local, "registered"):
+            _local.registered.discard(dataset_id)
         logger.info("Unregistered dataset view %s", quoted)
     except Exception:
         logger.warning("Failed to drop view %s", quoted, exc_info=True)

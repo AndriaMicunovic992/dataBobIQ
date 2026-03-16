@@ -26,22 +26,30 @@ export default function PivotView({ modelId }) {
 
   const { data: metadata, isLoading: metaLoading } = useMetadata(modelId);
 
-  // Resolve the dataset_id from selected fields — use the dataset that owns the
-  // first selected value/measure, falling back to the first dataset.
+  // Resolve the primary (fact) dataset_id from selected measures,
+  // falling back to the first dataset.
   const datasetId = useMemo(() => {
     if (!metadata?.datasets?.length) return null;
     const map = metadata.fieldDatasetMap || {};
-    // Check value fields first, then rows, then columns
-    const allSelected = [...(pivotConfig.values || []), ...(pivotConfig.rows || []), ...(pivotConfig.columns || [])];
-    for (const f of allSelected) {
+    for (const f of (pivotConfig.values || [])) {
       if (map[f]) return map[f];
     }
     return metadata.datasets[0].id;
-  }, [metadata, pivotConfig.values, pivotConfig.rows, pivotConfig.columns]);
+  }, [metadata, pivotConfig.values]);
 
   // Build the API-shaped pivot request from UI config
   const apiConfig = useMemo(() => {
     if (!datasetId || pivotConfig.values.length === 0) return null;
+    const map = metadata?.fieldDatasetMap || {};
+    // Identify dimensions that belong to other datasets (need JOINs)
+    const allDims = [...(pivotConfig.rows || []), ...(pivotConfig.columns || [])];
+    const joinDims = {};
+    for (const dim of allDims) {
+      const dimDs = map[dim];
+      if (dimDs && dimDs !== datasetId) {
+        joinDims[dim] = dimDs;
+      }
+    }
     return {
       model_id: modelId,
       dataset_id: datasetId,
@@ -57,8 +65,9 @@ export default function PivotView({ modelId }) {
       }, {}),
       scenario_ids: [],
       limit: pivotConfig.limit || 500,
+      join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
     };
-  }, [modelId, datasetId, pivotConfig]);
+  }, [modelId, datasetId, pivotConfig, metadata]);
 
   const { data: pivotData, isLoading, error } = usePivot(apiConfig);
 

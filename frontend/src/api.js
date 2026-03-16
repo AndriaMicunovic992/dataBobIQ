@@ -43,6 +43,10 @@ export const updateColumn = (datasetId, columnId, data) =>
 
 // Relationships
 export const listRelationships = (modelId) => req(`/models/${modelId}/relationships`);
+export const createRelationship = (modelId, data) =>
+  req(`/models/${modelId}/relationships`, json(data));
+export const updateRelationship = (id, data) =>
+  req(`/relationships/${id}`, { ...json(data), method: 'PATCH' });
 export const deleteRelationship = (id) => req(`/relationships/${id}`, { method: 'DELETE' });
 
 // Metadata & Pivot

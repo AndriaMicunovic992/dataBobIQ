@@ -89,6 +89,22 @@ class DatasetMetadata(BaseModel):
     dimensions: list[DimensionInfo]
 
 
+class RelationshipCreate(BaseModel):
+    source_dataset_id: str
+    target_dataset_id: str
+    source_column: str
+    target_column: str
+    relationship_type: str  # many_to_one, one_to_many, one_to_one, many_to_many
+
+
+class RelationshipUpdate(BaseModel):
+    source_dataset_id: str | None = None
+    target_dataset_id: str | None = None
+    source_column: str | None = None
+    target_column: str | None = None
+    relationship_type: str | None = None
+
+
 class RelationshipResponse(BaseModel):
     id: str
     model_id: str

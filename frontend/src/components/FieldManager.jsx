@@ -235,13 +235,30 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
     );
   }
 
-  const dimensions = metadata.dimensions || [];
-  const measures = metadata.measures || [];
+  const allDimensions = metadata.dimensions || [];
+  const allMeasures = metadata.measures || [];
   const datasets = metadata.datasets || [];
   const rows = pivotConfig.rows || [];
   const columns = pivotConfig.columns || [];
   const values = pivotConfig.values || [];
   const aggMap = pivotConfig.aggregations || {};
+
+  // Determine which dataset is "active" based on already-selected fields.
+  // Once a user picks a field, lock to that dataset so we don't mix columns.
+  const fieldDatasetMap = metadata.fieldDatasetMap || {};
+  const allSelected = [...values, ...rows, ...columns];
+  let activeDatasetId = null;
+  for (const f of allSelected) {
+    if (fieldDatasetMap[f]) { activeDatasetId = fieldDatasetMap[f]; break; }
+  }
+
+  // Filter dimensions/measures to the active dataset (or show all if nothing selected)
+  const dimensions = activeDatasetId
+    ? allDimensions.filter((d) => d._dataset_id === activeDatasetId)
+    : allDimensions;
+  const measures = activeDatasetId
+    ? allMeasures.filter((m) => m._dataset_id === activeDatasetId)
+    : allMeasures;
 
   const update = (patch) => onConfigChange({ ...pivotConfig, ...patch });
 

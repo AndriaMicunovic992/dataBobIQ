@@ -26,11 +26,18 @@ export default function PivotView({ modelId }) {
 
   const { data: metadata, isLoading: metaLoading } = useMetadata(modelId);
 
-  // Pick the first dataset_id from metadata for pivot queries
+  // Resolve the dataset_id from selected fields — use the dataset that owns the
+  // first selected value/measure, falling back to the first dataset.
   const datasetId = useMemo(() => {
     if (!metadata?.datasets?.length) return null;
+    const map = metadata.fieldDatasetMap || {};
+    // Check value fields first, then rows, then columns
+    const allSelected = [...(pivotConfig.values || []), ...(pivotConfig.rows || []), ...(pivotConfig.columns || [])];
+    for (const f of allSelected) {
+      if (map[f]) return map[f];
+    }
     return metadata.datasets[0].id;
-  }, [metadata]);
+  }, [metadata, pivotConfig.values, pivotConfig.rows, pivotConfig.columns]);
 
   // Build the API-shaped pivot request from UI config
   const apiConfig = useMemo(() => {

@@ -12,81 +12,139 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _xml_escape(text: str) -> str:
+    """Escape special characters for XML attributes and content."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def _format_number(value: float | int | None) -> str:
+    """Format a number in a human-readable way (e.g. 12.5M, -890K)."""
+    if value is None:
+        return "?"
+    abs_val = abs(value)
+    sign = "-" if value < 0 else ""
+    if abs_val >= 1_000_000:
+        return f"{sign}{abs_val / 1_000_000:.1f}M"
+    elif abs_val >= 1_000:
+        return f"{sign}{abs_val / 1_000:.0f}K"
+    else:
+        return f"{value:.0f}"
+
+
 async def build_ai_context(
     model_id: str,
     dataset_id: str,
     db_session: AsyncSession,
 ) -> str:
-    """Build an XML context string for Claude with metadata, semantic layer, and knowledge.
+    """Build a rich XML <data_context> string for Claude system prompts.
 
-    The context is injected into the system prompt so Claude has full awareness of:
-    - The model's datasets, columns, fact type, and schema
-    - Any KPI definitions
-    - Saved knowledge entries
-    - The canonical field mapping
+    The context gives the AI full awareness of the semantic layer:
+    - Datasets with dimensions (cardinality, top values) and measures (summary stats)
+    - Sign conventions
+    - KPI definitions
+    - Knowledge entries
+    - Glossary (derived from knowledge definitions)
+    - Active scenarios
 
-    Returns an XML string.
+    Target: <4000 tokens for a typical model.
     """
     from app.models.metadata import (
         Dataset,
         DatasetColumn,
         KnowledgeEntry,
         KPIDefinition,
+        Scenario,
+        ScenarioRule,
     )
+    from app.duckdb_engine import execute_query, view_name_for
 
-    parts: list[str] = ["<context>"]
+    parts: list[str] = ["<data_context>"]
 
     # ------------------------------------------------------------------ #
-    # Dataset info                                                         #
+    # All active datasets in this model                                    #
     # ------------------------------------------------------------------ #
-    result = await db_session.execute(
-        select(Dataset).where(Dataset.id == dataset_id)
+    ds_result = await db_session.execute(
+        select(Dataset).where(Dataset.model_id == model_id, Dataset.status == "active")
     )
-    dataset = result.scalar_one_or_none()
+    datasets = ds_result.scalars().all()
 
-    if dataset:
-        parts.append(f"  <dataset id=\"{dataset.id}\" name=\"{dataset.name}\" "
-                     f"fact_type=\"{dataset.fact_type}\" "
-                     f"row_count=\"{dataset.row_count}\" "
-                     f"data_layer=\"{dataset.data_layer}\">")
+    for ds in datasets:
+        tag = "dataset" if ds.fact_type != "custom" else "custom_dataset"
+        parts.append(
+            f'  <{tag} name="{_xml_escape(ds.name)}" fact_type="{ds.fact_type}" '
+            f'rows="{ds.row_count or "?"}">'
+        )
 
-        # Columns
+        # Fetch columns
         col_result = await db_session.execute(
-            select(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id)
+            select(DatasetColumn).where(DatasetColumn.dataset_id == ds.id)
         )
         columns = col_result.scalars().all()
 
-        if columns:
-            parts.append("    <columns>")
-            for col in columns:
-                canonical = col.canonical_name or ""
-                parts.append(
-                    f"      <column source=\"{col.source_name}\" "
-                    f"canonical=\"{canonical}\" "
-                    f"type=\"{col.data_type}\" "
-                    f"role=\"{col.column_role}\" "
-                    f"unique_count=\"{col.unique_count or '?'}\" />"
-                )
-            parts.append("    </columns>")
+        dimensions = [c for c in columns if c.column_role == "dimension"]
+        measures = [c for c in columns if c.column_role == "measure"]
 
-        # Mapping config summary
-        if dataset.mapping_config:
-            mappings = dataset.mapping_config.get("mappings", [])
-            if mappings:
-                parts.append("    <column_mappings>")
-                for m in mappings:
-                    parts.append(
-                        f"      <map source=\"{m.get('source', '')}\" "
-                        f"target=\"{m.get('target', '')}\" "
-                        f"confidence=\"{m.get('confidence', '?')}\" />"
+        # Dimensions with cardinality and top values
+        if dimensions:
+            parts.append("    <dimensions>")
+            for dim in dimensions:
+                display_name = dim.canonical_name or dim.source_name
+                attrs = f'name="{_xml_escape(display_name)}" cardinality="{dim.unique_count or "?"}"'
+                # Try to fetch top values from DuckDB (lightweight query)
+                top_vals = ""
+                try:
+                    view = view_name_for(ds.id)
+                    col_name = dim.canonical_name or dim.source_name
+                    rows = execute_query(
+                        f'SELECT DISTINCT "{col_name}" AS v FROM {view} '
+                        f'WHERE "{col_name}" IS NOT NULL '
+                        f'ORDER BY "{col_name}" LIMIT 8'
                     )
-                sign = dataset.mapping_config.get("sign_convention", "unknown")
-                parts.append(f"      <sign_convention>{sign}</sign_convention>")
-                parts.append("    </column_mappings>")
+                    vals = [str(r["v"]) for r in rows]
+                    if vals:
+                        top_vals = ", ".join(vals)
+                except Exception:
+                    pass
+                if top_vals:
+                    attrs += f' top_values="{_xml_escape(top_vals)}"'
+                parts.append(f"      <dim {attrs}/>")
+            parts.append("    </dimensions>")
 
-        parts.append("  </dataset>")
-    else:
-        parts.append(f"  <dataset id=\"{dataset_id}\" status=\"not_found\" />")
+        # Measures with summary stats
+        if measures:
+            parts.append("    <measures>")
+            for meas in measures:
+                display_name = meas.canonical_name or meas.source_name
+                stats = ""
+                try:
+                    view = view_name_for(ds.id)
+                    col_name = meas.canonical_name or meas.source_name
+                    rows = execute_query(
+                        f'SELECT SUM("{col_name}") AS s, MIN("{col_name}") AS mn, '
+                        f'MAX("{col_name}") AS mx FROM {view}'
+                    )
+                    if rows:
+                        r = rows[0]
+                        stats = (
+                            f'sum={_format_number(r.get("s"))}, '
+                            f'min={_format_number(r.get("mn"))}, '
+                            f'max={_format_number(r.get("mx"))}'
+                        )
+                except Exception:
+                    pass
+                attrs = f'name="{_xml_escape(display_name)}" type="{meas.data_type}"'
+                if stats:
+                    attrs += f' stats="{stats}"'
+                parts.append(f'      <measure {attrs}/>')
+            parts.append("    </measures>")
+
+        # Sign convention from mapping config
+        if ds.mapping_config:
+            sign = ds.mapping_config.get("sign_convention")
+            if sign:
+                parts.append(f"    <sign_convention>{_xml_escape(str(sign))}</sign_convention>")
+
+        parts.append(f"  </{tag}>")
 
     # ------------------------------------------------------------------ #
     # KPI definitions                                                      #
@@ -101,8 +159,8 @@ async def build_ai_context(
         for kpi in kpis:
             deps = ", ".join(kpi.depends_on or [])
             parts.append(
-                f"    <kpi id=\"{kpi.kpi_id}\" label=\"{kpi.label}\" "
-                f"type=\"{kpi.kpi_type}\" depends_on=\"{deps}\" />"
+                f'    <kpi id="{kpi.kpi_id}" label="{_xml_escape(kpi.label)}" '
+                f'type="{kpi.kpi_type}" depends_on="{deps}"/>'
             )
         parts.append("  </kpi_definitions>")
 
@@ -118,19 +176,65 @@ async def build_ai_context(
     knowledge = knowledge_result.scalars().all()
 
     if knowledge:
-        parts.append("  <knowledge_base>")
+        parts.append("  <knowledge>")
         for entry in knowledge:
-            plain = entry.plain_text.replace("<", "&lt;").replace(">", "&gt;")
+            plain = _xml_escape(entry.plain_text)
             parts.append(
-                f"    <entry type=\"{entry.entry_type}\" "
-                f"source=\"{entry.source}\" "
-                f"confidence=\"{entry.confidence or 'confirmed'}\">"
+                f'    <entry type="{entry.entry_type}" '
+                f'confidence="{entry.confidence or "confirmed"}">'
                 f"{plain}"
                 f"</entry>"
             )
-        parts.append("  </knowledge_base>")
+        parts.append("  </knowledge>")
 
-    parts.append("</context>")
+    # ------------------------------------------------------------------ #
+    # Glossary (derived from knowledge definitions)                        #
+    # ------------------------------------------------------------------ #
+    definitions = [e for e in (knowledge or []) if e.entry_type == "definition"]
+    if definitions:
+        parts.append("  <glossary>")
+        for defn in definitions:
+            content = defn.content or {}
+            term = content.get("term", defn.plain_text.split("=")[0].strip() if "=" in defn.plain_text else "")
+            applies_to = content.get("applies_to", {})
+            if isinstance(applies_to, dict) and applies_to:
+                col = applies_to.get("column", "")
+                val = applies_to.get("value", "")
+                maps_to = f'{col} = "{val}"' if col and val else ""
+            else:
+                maps_to = ""
+            if term:
+                attrs = f'phrase="{_xml_escape(str(term))}"'
+                if maps_to:
+                    attrs += f' maps_to=\'{_xml_escape(maps_to)}\''
+                aliases = content.get("aliases", [])
+                if aliases:
+                    attrs += f' aliases="{_xml_escape(", ".join(str(a) for a in aliases))}"'
+                parts.append(f"    <term {attrs}/>")
+        parts.append("  </glossary>")
+
+    # ------------------------------------------------------------------ #
+    # Active scenarios                                                     #
+    # ------------------------------------------------------------------ #
+    scenario_result = await db_session.execute(
+        select(Scenario).where(Scenario.model_id == model_id)
+    )
+    scenarios = scenario_result.scalars().all()
+
+    if scenarios:
+        parts.append(f'  <scenarios count="{len(scenarios)}">')
+        for sc in scenarios:
+            base_year = ""
+            if sc.base_config and isinstance(sc.base_config, dict):
+                base_year = str(sc.base_config.get("base_year", ""))
+            rule_count = len(sc.rules) if sc.rules else 0
+            attrs = f'id="{sc.id}" name="{_xml_escape(sc.name)}" rules="{rule_count}"'
+            if base_year:
+                attrs += f' base_year="{base_year}"'
+            parts.append(f"    <scenario {attrs}/>")
+        parts.append("  </scenarios>")
+
+    parts.append("</data_context>")
     return "\n".join(parts)
 
 

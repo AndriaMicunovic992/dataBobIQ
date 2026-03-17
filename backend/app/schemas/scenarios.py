@@ -13,6 +13,7 @@ class ScenarioRuleCreate(BaseModel):
     name: str
     rule_type: str  # multiplier|offset|set_value
     target_field: str = "amount"
+    dataset_id: str | None = None  # target dataset; auto-resolved when omitted
     adjustment: dict  # {factor: 1.10} or {offset: -300000}
     filter_expr: dict | None = None
     period_from: str | None = None
@@ -22,7 +23,7 @@ class ScenarioRuleCreate(BaseModel):
 
 class ScenarioCreate(BaseModel):
     name: str
-    dataset_id: str
+    dataset_id: str | None = None  # optional — scenarios are model-level
     description: str | None = None
     base_config: dict | None = None  # {source, base_year}
     color: str | None = None
@@ -39,6 +40,7 @@ class ScenarioUpdate(BaseModel):
 class ScenarioRuleResponse(BaseModel):
     id: str
     scenario_id: str
+    dataset_id: str | None = None
     priority: int
     name: str
     rule_type: str
@@ -56,7 +58,7 @@ class ScenarioRuleResponse(BaseModel):
 class ScenarioResponse(BaseModel):
     id: str
     model_id: str | None = None
-    dataset_id: str
+    dataset_id: str | None = None
     name: str
     description: str | None = None
     base_config: dict | None = None

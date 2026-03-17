@@ -264,15 +264,11 @@ _SCENARIO_TOOLS = [
         ),
         "input_schema": {
             "type": "object",
-            "required": ["name", "dataset_id", "base_config", "rules"],
+            "required": ["name", "base_config", "rules"],
             "properties": {
                 "name": {
                     "type": "string",
                     "description": "Descriptive scenario name, e.g. 'Revenue +10% (2026)'",
-                },
-                "dataset_id": {
-                    "type": "string",
-                    "description": "ID of the dataset this scenario applies to.",
                 },
                 "base_config": {
                     "type": "object",
@@ -300,7 +296,13 @@ _SCENARIO_TOOLS = [
                 },
                 "rules": {
                     "type": "array",
-                    "description": "One or more rules. Submit ALL rules in one call.",
+                    "description": (
+                        "One or more rules. Submit ALL rules in one call. "
+                        "Each rule can optionally specify a dataset_id to target a specific dataset. "
+                        "When omitted, the engine auto-resolves which dataset contains the "
+                        "target_field and filter columns using the model's knowledge base and "
+                        "dataset schemas."
+                    ),
                     "items": {
                         "type": "object",
                         "required": ["name", "rule_type", "target_field"],
@@ -308,6 +310,13 @@ _SCENARIO_TOOLS = [
                             "name": {
                                 "type": "string",
                                 "description": "Human-readable rule name, e.g. 'Revenue growth 10%'",
+                            },
+                            "dataset_id": {
+                                "type": "string",
+                                "description": (
+                                    "Optional. Target dataset ID for this rule. "
+                                    "Omit to let the engine auto-resolve from the model's datasets."
+                                ),
                             },
                             "rule_type": {
                                 "type": "string",
@@ -625,7 +634,6 @@ async def _execute_tool(
         return {
             "scenario_created": True,
             "name": tool_input.get("name"),
-            "dataset_id": tool_input.get("dataset_id", dataset_id),
             "base_config": tool_input.get("base_config", {}),
             "rules": tool_input.get("rules", []),
             "color": tool_input.get("color"),
@@ -826,14 +834,29 @@ BEHAVIORAL RULES:
    - Show the impact preview
    - Flag any warnings (zero rows matched, all rows matched)
 
-7. MULTI-TABLE AWARENESS
-   When data context shows multiple datasets:
-   - Use dataset_name parameter in query_data to query specific tables
+7. MULTI-TABLE AWARENESS & MODEL-LEVEL SCENARIOS
+   Scenarios are MODEL-LEVEL — they span ALL datasets in the model, not just
+   one table. When creating scenario rules:
+   - Each rule can optionally include a dataset_id to target a specific dataset
+   - When omitted, the engine auto-resolves which dataset contains the
+     target field and filter columns
+   - Use knowledge entries (especially "relationship" type) to understand how
+     datasets connect — e.g. GL Entries joined to Chart of Accounts
+   - For cross-table scenarios, create multiple rules targeting different datasets
+   - Use dataset_name parameter in query_data to explore specific tables
    - Don't assume all measures come from the same table
-   - For cross-table questions (cost per hour), query each table separately
-     and combine in your reasoning
 
-8. SUBMIT ALL RULES AT ONCE
+8. KNOWLEDGE-DRIVEN SCENARIO BUILDING
+   ALWAYS consult the knowledge base before building scenarios:
+   - "definition" entries tell you which columns/values map to business terms
+     (e.g. "revenue" = account_type: "revenue")
+   - "relationship" entries tell you how datasets join together
+   - "calculation" entries define KPI formulas with their component filters
+   - "note" entries contain business context (e.g. "Company 99 is internal elimination")
+   - "transformation" entries describe data transformations
+   Use this knowledge to build accurate filters and understand data relationships.
+
+9. SUBMIT ALL RULES AT ONCE
    When creating multiple rules for a scenario, submit them ALL in a single
    create_scenario call. Never split rules across multiple calls.
 
@@ -848,10 +871,12 @@ list_dimension_values: Use to find filter values before creating rules
 - Use search parameter for large dimension tables
 
 create_scenario: Create new scenario with rules
+- Scenarios are model-level: no dataset_id required on the scenario itself
 - ALWAYS include base_config with base_year
 - Include ALL rules in the rules array
 - Each rule must have a filter (unless deliberately applying to all)
-- Use scenario_name for a descriptive name
+- Each rule can optionally include dataset_id to target a specific dataset
+- When dataset_id is omitted, the engine auto-resolves from the model's datasets
 
 add_scenario_rule: Add rules to an existing scenario
 - Pass scenario_id from list_scenarios
@@ -872,6 +897,7 @@ get_kpi_values: Evaluate P&L KPIs
 list_knowledge: Check for business term definitions
 - ALWAYS check before creating scenario rules
 - Find the correct filter columns and values for terms like "revenue", "COGS", etc.
+- Use relationship knowledge to understand cross-dataset joins
 
 DECISION TREE FOR SCENARIO CREATION:
 User says "increase revenue by 10% for 2026":

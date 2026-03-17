@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import {
   useScenarios,
   useScenario,
@@ -28,22 +27,11 @@ function CreateScenarioForm({ modelId, onClose }) {
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [baseLayer, setBaseLayer] = useState('actuals');
-  const { data: metadata } = useMetadata(modelId);
   const mut = useCreateScenario(modelId);
 
-  const datasets = metadata?.datasets || [];
-  const [datasetId, setDatasetId] = useState('');
-
-  // Auto-select the first dataset when metadata loads
-  React.useEffect(() => {
-    if (!datasetId && datasets.length > 0) {
-      setDatasetId(datasets[0].id);
-    }
-  }, [datasets, datasetId]);
-
   const handleSubmit = () => {
-    if (!name.trim() || !datasetId) return;
-    mut.mutate({ name: name.trim(), description: description.trim(), dataset_id: datasetId, base_layer: baseLayer }, {
+    if (!name.trim()) return;
+    mut.mutate({ name: name.trim(), description: description.trim(), base_layer: baseLayer }, {
       onSuccess: onClose,
     });
   };
@@ -53,19 +41,13 @@ function CreateScenarioForm({ modelId, onClose }) {
       <h3 style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.lg, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
         New Scenario
       </h3>
+      <p style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>
+        Scenarios apply across all datasets in this model. Add rules after creation to define what-if adjustments.
+      </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md, marginBottom: spacing.md }}>
         <div>
           <label style={labelStyle}>Scenario Name *</label>
           <input style={inputStyle} placeholder="e.g. Revenue +10%" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
-        </div>
-        <div>
-          <label style={labelStyle}>Dataset *</label>
-          <select style={inputStyle} value={datasetId} onChange={(e) => setDatasetId(e.target.value)}>
-            {datasets.length === 0 && <option value="">No datasets available</option>}
-            {datasets.map((ds) => (
-              <option key={ds.id} value={ds.id}>{ds.name || ds.id}</option>
-            ))}
-          </select>
         </div>
         <div>
           <label style={labelStyle}>Base Layer</label>
@@ -87,7 +69,7 @@ function CreateScenarioForm({ modelId, onClose }) {
       {mut.isError && <p style={{ color: colors.danger, fontSize: typography.fontSizes.sm, margin: `0 0 ${spacing.sm}px`, fontFamily: typography.fontFamily }}>{mut.error?.message}</p>}
       <div style={{ display: 'flex', gap: spacing.sm, justifyContent: 'flex-end' }}>
         <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" loading={mut.isPending} disabled={!name.trim() || !datasetId} onClick={handleSubmit}>Create</Button>
+        <Button variant="primary" loading={mut.isPending} disabled={!name.trim()} onClick={handleSubmit}>Create</Button>
       </div>
     </div>
   );

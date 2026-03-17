@@ -112,6 +112,10 @@ def detect_relationships(
 
 _DATE_TYPES = {"date", "datetime", "timestamp"}
 
+# Column names commonly used for period/date fields that should match calendar columns
+_PERIOD_NAMES = {"period", "periode", "fiscal_period", "month", "year_month", "yyyymm", "yearmonth"}
+_CALENDAR_PERIOD_NAMES = {"year_month", "date", "date_key", "fiscal_period", "period", "month"}
+
 
 def _names_could_match(
     nc_canonical: str, nc_source: str,
@@ -148,6 +152,15 @@ def _names_could_match(
     if nc_type and oc_type:
         if nc_type.lower() in _DATE_TYPES and oc_type.lower() in _DATE_TYPES:
             return True
+
+    # Period-name heuristic: one side has a period/date column name and the other
+    # has a calendar-typical column name → likely a calendar join candidate.
+    # This catches "period" (string) ↔ "year_month" (string) matches that the
+    # date-type check misses.
+    if names & _PERIOD_NAMES and others & _CALENDAR_PERIOD_NAMES:
+        return True
+    if others & _PERIOD_NAMES and names & _CALENDAR_PERIOD_NAMES:
+        return True
 
     return False
 

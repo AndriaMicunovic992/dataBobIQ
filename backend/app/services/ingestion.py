@@ -471,6 +471,7 @@ async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> str:
                 select(DatasetColumn.source_name).where(DatasetColumn.dataset_id == cal_id)
             )
             existing_cols = {r[0] for r in col_result.all()}
+            added_cols = False
             for col_def in _CALENDAR_COLUMNS:
                 if col_def["source_name"] not in existing_cols:
                     dc = DatasetColumn(
@@ -481,8 +482,23 @@ async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> str:
                         column_role=col_def["column_role"],
                     )
                     db.add(dc)
+                    added_cols = True
                     logger.info("Added missing calendar column %s", col_def["source_name"])
             await db.commit()
+
+            # Re-run relationship detection if columns were added,
+            # so new columns (e.g. year_month) can be matched to fact tables.
+            if added_cols:
+                try:
+                    cal_col_meta = [
+                        {"source_name": c["source_name"], "canonical_name": None,
+                         "column_role": c["column_role"], "data_type": c["data_type"]}
+                        for c in _CALENDAR_COLUMNS
+                    ]
+                    await _detect_and_save_relationships(cal_id, model_id, cal_col_meta)
+                except Exception:
+                    logger.warning("Calendar relationship re-detection failed", exc_info=True)
+
             return cal_id
 
     # Seed the Parquet file

@@ -226,7 +226,10 @@ def build_pivot_sql(
     filter_clause, filter_params = _build_filter_clause(
         filters, alias_map=alias_map, use_aliases=use_aliases,
     )
-    params: list[Any] = list(filter_params)
+    # NOTE: params are built in SQL token order — CASE WHEN ?'s (SELECT) come
+    # before filter ?'s (WHERE) in the generated SQL, so pivot values must be
+    # appended first.  Filter params are added after measure construction.
+    params: list[Any] = []
 
     # --- SELECT expressions ---
     select_parts: list[str] = []
@@ -281,6 +284,10 @@ def build_pivot_sql(
                 label = f"{pval}__{m.field}"
                 select_parts.append(f"{expr} AS {_quote_alias(label)}")
                 column_infos.append(ColumnInfo(field=label, type="measure"))
+
+    # Append filter params AFTER measure/pivot params so positional ?'s match
+    # the SQL order: SELECT CASE WHEN ?'s first, then WHERE ?'s.
+    params.extend(filter_params)
 
     # --- GROUP BY (must match SELECT expressions for dimensions) ---
     group_by_parts: list[str] = []

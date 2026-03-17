@@ -97,13 +97,43 @@ def _agg_expr(measure: MeasureDef) -> str:
     return f"{agg}({col})"
 
 
-def _get_pivot_values(dataset_id: str, column_dimension: str, filters: dict) -> list[str]:
-    """Fetch distinct values of the column_dimension field for pivoting."""
-    col = _quote(column_dimension)
+def _get_pivot_values(
+    dataset_id: str,
+    column_dimension: str,
+    filters: dict,
+    join_dimensions: dict[str, str] | None = None,
+    relationships: list | None = None,
+) -> list[str]:
+    """Fetch distinct values of the column_dimension field for pivoting.
+
+    When the column_dimension comes from a joined dataset, builds the
+    necessary JOINs so the column is accessible.
+    """
     view = view_name_for(dataset_id)
-    filter_clause, params = _build_filter_clause(filters)
+
+    # Build JOINs if the column_dimension comes from another dataset
+    join_sql = ""
+    alias_map: dict[str, str] = {}
+    col_qualified = _quote(column_dimension)
+
+    if join_dimensions and column_dimension in join_dimensions:
+        join_sql, alias_map = _build_join_clauses(dataset_id, join_dimensions, relationships)
+        if column_dimension in alias_map:
+            alias = alias_map[column_dimension]
+            col_qualified = f'{alias}.{_quote(column_dimension)}'
+
+    use_aliases = bool(join_sql)
+    filter_clause, params = _build_filter_clause(
+        filters, alias_map=alias_map, use_aliases=use_aliases,
+    )
     where = f"WHERE {filter_clause}" if filter_clause else ""
-    sql = f"SELECT DISTINCT {col} FROM {view} {where} ORDER BY {col} LIMIT {_MAX_PIVOT_COLUMNS}"
+
+    if use_aliases:
+        from_clause = f"{view} AS f {join_sql}"
+    else:
+        from_clause = view
+
+    sql = f"SELECT DISTINCT {col_qualified} FROM {from_clause} {where} ORDER BY {col_qualified} LIMIT {_MAX_PIVOT_COLUMNS}"
     rows = execute_query(sql, params if params else None)
     return [str(r[column_dimension]) for r in rows if r[column_dimension] is not None]
 
@@ -233,7 +263,7 @@ def build_pivot_sql(
     else:
         # Conditional aggregation pivot
         col_dim = request.column_dimension
-        pivot_values = _get_pivot_values(dataset_id, col_dim, filters)
+        pivot_values = _get_pivot_values(dataset_id, col_dim, filters, request.join_dimensions, relationships)
         for pval in pivot_values:
             for m in request.measures:
                 agg = m.aggregation.upper()
@@ -241,7 +271,11 @@ def build_pivot_sql(
                 prefix = "f." if use_aliases else ""
                 col = f'{prefix}"{col_name}"'
                 col_dim_name = _validate_identifier(col_dim)
-                col_dim_q = f'{prefix}"{col_dim_name}"'
+                # Column dimension may come from a joined table, not the fact table
+                if col_dim in alias_map:
+                    col_dim_q = f'{alias_map[col_dim]}."{col_dim_name}"'
+                else:
+                    col_dim_q = f'{prefix}"{col_dim_name}"'
                 expr = f"{agg}(CASE WHEN {col_dim_q} = ? THEN {col} END)"
                 params.append(pval)
                 label = f"{pval}__{m.field}"

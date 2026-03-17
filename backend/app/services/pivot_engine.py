@@ -13,8 +13,10 @@ logger = logging.getLogger(__name__)
 # Allowlist for SQL identifiers to prevent injection when we must inline column names
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
-# For generated aliases (e.g. "2025-01-01__amount") — allow alphanumeric, _, -, .
-_SAFE_ALIAS_RE = re.compile(r"^[a-zA-Z0-9_][a-zA-Z0-9_.:\- ]*$")
+# For generated aliases (e.g. "2025-01-01__amount") — block only control characters.
+# DuckDB supports any character in double-quoted identifiers; _quote_alias()
+# already escapes embedded double quotes.
+_SAFE_ALIAS_RE = re.compile(r"^[^\x00-\x1f]+$")
 
 # Maximum distinct values fetched for column pivot to prevent query explosion
 _MAX_PIVOT_COLUMNS = 50
@@ -281,7 +283,7 @@ def build_pivot_sql(
                     col_dim_q = f'{prefix}"{col_dim_name}"'
                 expr = f"{agg}(CASE WHEN {col_dim_q} = ? THEN {col} END)"
                 params.append(pval)
-                label = f"{pval}__{m.field}"
+                label = pval if len(request.measures) == 1 else f"{pval}__{m.field}"
                 select_parts.append(f"{expr} AS {_quote_alias(label)}")
                 column_infos.append(ColumnInfo(field=label, type="measure"))
 

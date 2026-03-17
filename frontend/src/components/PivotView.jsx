@@ -4,16 +4,11 @@ import { listKPIs } from '../api.js';
 import { useMetadata } from '../hooks/useMetadata.js';
 import { usePivot } from '../hooks/usePivot.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
-import { Button } from './common/Button.jsx';
 import { KPICard } from './common/Card.jsx';
 import FieldManager from './FieldManager.jsx';
 import FilterManager from './FilterManager.jsx';
 import PivotTable from './PivotTable.jsx';
-import PivotChart from './PivotChart.jsx';
-
 export default function PivotView({ modelId }) {
-  const [viewMode, setViewMode] = useState('table'); // 'table' | 'chart'
-  const [stacked, setStacked] = useState(false);
   const [pivotConfig, setPivotConfig] = useState({
     model_id: modelId,
     rows: [],
@@ -136,12 +131,6 @@ export default function PivotView({ modelId }) {
             />
           </div>
           <div style={{ display: 'flex', gap: spacing.xs, flexShrink: 0 }}>
-            <ViewToggle mode={viewMode} onChange={setViewMode} />
-            {viewMode === 'chart' && (
-              <Button variant="ghost" size="sm" onClick={() => setStacked((v) => !v)}>
-                {stacked ? '≡ Grouped' : '⊟ Stacked'}
-              </Button>
-            )}
           </div>
         </div>
 
@@ -169,48 +158,11 @@ export default function PivotView({ modelId }) {
             <EmptyState />
           ) : (
             <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
-              {viewMode === 'table' ? (
-                <PivotTable data={pivotData} loading={isLoading} error={error} />
-              ) : (
-                <div style={{ padding: spacing.md }}>
-                  <PivotChart data={pivotData} stacked={stacked} />
-                </div>
-              )}
+              <PivotTable data={pivotData} loading={isLoading} error={error} />
             </div>
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-function ViewToggle({ mode, onChange }) {
-  return (
-    <div style={{
-      display: 'inline-flex', borderRadius: radius.md,
-      border: `1px solid ${colors.border}`, overflow: 'hidden',
-    }}>
-      {[
-        { id: 'table', label: '⊞ Table' },
-        { id: 'chart', label: '◫ Chart' },
-      ].map((opt) => (
-        <button
-          key={opt.id}
-          onClick={() => onChange(opt.id)}
-          style={{
-            padding: `${spacing.xs}px ${spacing.sm}px`,
-            background: mode === opt.id ? colors.primary : colors.bgCard,
-            color: mode === opt.id ? 'white' : colors.textSecondary,
-            border: 'none', cursor: 'pointer',
-            fontSize: typography.fontSizes.xs,
-            fontFamily: typography.fontFamily,
-            fontWeight: typography.fontWeights.medium,
-            transition: 'all 0.1s',
-          }}
-        >
-          {opt.label}
-        </button>
-      ))}
     </div>
   );
 }

@@ -43,15 +43,50 @@ def _apply_mapping(df: pl.DataFrame, mapping_config: dict) -> pl.DataFrame:
             "sign_convention": "expenses_negative",
             "detected_hierarchy": [...],
         }
+
+    Handles duplicate target names gracefully: keeps the highest-confidence
+    mapping and drops redundant source columns to avoid Polars DuplicateError.
     """
     mappings: list[dict] = mapping_config.get("mappings", [])
+    # Sort by confidence desc so the best mapping wins for duplicate targets
+    mappings_sorted = sorted(mappings, key=lambda m: m.get("confidence", 0), reverse=True)
+
     rename_map: dict[str, str] = {}
-    for m in mappings:
+    seen_targets: set[str] = set()
+    drop_cols: list[str] = []
+
+    for m in mappings_sorted:
         src = m.get("source", "")
         tgt = m.get("target", "")
-        if src and tgt and src in df.columns:
-            rename_map[src] = tgt
+        if not src or not tgt or src not in df.columns:
+            continue
+        if src == tgt:
+            # Identity mapping — no rename needed, but mark target as taken
+            seen_targets.add(tgt)
+            continue
+        if tgt in seen_targets:
+            # Another column already claims this target — drop this one
+            logger.warning(
+                "Dropping column '%s': target '%s' already claimed by another mapping", src, tgt
+            )
+            drop_cols.append(src)
+            continue
+        seen_targets.add(tgt)
+        rename_map[src] = tgt
 
+    # Check for collisions: a rename target matches an existing column
+    # that isn't itself being renamed away
+    columns_being_renamed = set(rename_map.keys())
+    for src, tgt in list(rename_map.items()):
+        if tgt in df.columns and tgt not in columns_being_renamed:
+            logger.warning(
+                "Dropping column '%s': rename target '%s' collides with existing column", src, tgt
+            )
+            drop_cols.append(src)
+            del rename_map[src]
+
+    if drop_cols:
+        df = df.drop([c for c in drop_cols if c in df.columns])
     if rename_map:
         df = df.rename(rename_map)
         logger.debug("Renamed %d columns via mapping", len(rename_map))

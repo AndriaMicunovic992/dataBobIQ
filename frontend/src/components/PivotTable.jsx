@@ -136,20 +136,23 @@ export default function PivotTable({ data, loading, error }) {
             <tr style={{ background: '#f0f9ff', borderTop: `2px solid ${colors.border}` }}>
               {totals.map((val, ci) => {
                 const numeric = typeof val === 'number';
+                // Show "Total" in the first dimension column (where ROLLUP puts NULL)
+                const displayVal = ci === 0 && (val === null || val === undefined) ? 'Total' : val;
+                const isLabel = ci === 0 && displayVal === 'Total';
                 return (
                   <td
                     key={ci}
                     style={{
                       padding: `${spacing.sm}px ${spacing.md}px`,
-                      textAlign: numeric ? 'right' : 'left',
+                      textAlign: isLabel ? 'left' : numeric ? 'right' : 'left',
                       fontWeight: typography.fontWeights.bold,
                       color: colors.primary,
                       borderRight: ci < colNames.length - 1 ? `1px solid ${colors.border}` : 'none',
-                      fontFamily: 'monospace',
+                      fontFamily: isLabel ? typography.fontFamily : 'monospace',
                       fontSize: typography.fontSizes.sm,
                     }}
                   >
-                    {formatValue(val, colNames[ci])}
+                    {isLabel ? 'Total' : formatValue(displayVal, colNames[ci])}
                   </td>
                 );
               })}

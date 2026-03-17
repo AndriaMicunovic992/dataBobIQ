@@ -67,6 +67,7 @@ export default function PivotView({ modelId }) {
         return acc;
       }, {}),
       scenario_ids: [],
+      include_totals: true,
       limit: pivotConfig.limit || 500,
       join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
     };

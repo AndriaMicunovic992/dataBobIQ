@@ -293,15 +293,28 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
 
         # Seed calendar dimension if not already present
         try:
-            await _ensure_calendar_dataset(model_id, data_dir)
+            cal_id = await _ensure_calendar_dataset(model_id, data_dir)
         except Exception:
+            cal_id = None
             logger.warning("Failed to seed calendar for model %s", model_id, exc_info=True)
 
-        # Detect relationships with other active datasets
+        # Detect relationships with other active datasets (including calendar)
         try:
             await _detect_and_save_relationships(dataset_id, model_id, column_meta)
         except Exception:
             logger.warning("Relationship detection failed for dataset %s", dataset_id, exc_info=True)
+
+        # Also detect relationships FROM the calendar to this new dataset
+        if cal_id:
+            try:
+                cal_col_meta = [
+                    {"source_name": c["source_name"], "canonical_name": None,
+                     "column_role": c["column_role"], "data_type": c["data_type"]}
+                    for c in _CALENDAR_COLUMNS
+                ]
+                await _detect_and_save_relationships(cal_id, model_id, cal_col_meta)
+            except Exception:
+                logger.warning("Calendar relationship detection failed", exc_info=True)
 
         # Persist final state
         import os as _os
@@ -428,13 +441,15 @@ _CALENDAR_COLUMNS = [
     {"source_name": "day_name", "display_name": "Day Name", "data_type": "string", "column_role": "attribute"},
     {"source_name": "is_weekend", "display_name": "Is Weekend", "data_type": "boolean", "column_role": "attribute"},
     {"source_name": "week_of_year", "display_name": "Week of Year", "data_type": "integer", "column_role": "attribute"},
+    {"source_name": "year_month", "display_name": "Year-Month", "data_type": "string", "column_role": "time"},
 ]
 
 
-async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> None:
+async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> str:
     """Seed the calendar Parquet file, create a Dataset record, and register in DuckDB.
 
     Idempotent — skips if the dataset already exists.
+    Returns the calendar dataset ID.
     """
     from sqlalchemy import select
     from app.models.metadata import Dataset, DatasetColumn
@@ -448,7 +463,7 @@ async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> None:
             # Already created — just make sure DuckDB view exists
             parquet_path = get_dimension_path(data_dir, model_id, "dim_date")
             register_dataset(cal_id, parquet_path)
-            return
+            return cal_id
 
     # Seed the Parquet file
     parquet_path = seed_calendar(model_id, data_dir)
@@ -485,3 +500,5 @@ async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> None:
 
         await db.commit()
         logger.info("Created calendar dataset %s for model %s", cal_id, model_id)
+
+    return cal_id

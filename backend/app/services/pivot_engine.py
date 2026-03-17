@@ -141,11 +141,11 @@ def _build_join_clauses(
                 break
 
         if not rel:
-            logger.warning(
-                "No relationship found to join dataset %s for dimension %s — skipping",
-                dim_ds_id, dim_field,
+            raise ValueError(
+                f"Cannot use dimension '{dim_field}': no relationship found between "
+                f"the fact dataset and dataset {dim_ds_id}. "
+                f"Please add a relationship in the Data Model tab first."
             )
-            continue
 
         alias = f"j{len(joined_datasets)}"
         joined_datasets[dim_ds_id] = alias

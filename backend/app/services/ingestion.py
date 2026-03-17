@@ -459,10 +459,30 @@ async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> str:
 
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Dataset).where(Dataset.id == cal_id))
-        if result.scalar_one_or_none() is not None:
-            # Already created — just make sure DuckDB view exists
-            parquet_path = get_dimension_path(data_dir, model_id, "dim_date")
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            # Already created — re-seed Parquet (picks up new columns) and
+            # ensure DuckDB view exists.
+            parquet_path = seed_calendar(model_id, data_dir)
             register_dataset(cal_id, parquet_path)
+
+            # Add any missing DatasetColumn records (e.g. year_month added later)
+            col_result = await db.execute(
+                select(DatasetColumn.source_name).where(DatasetColumn.dataset_id == cal_id)
+            )
+            existing_cols = {r[0] for r in col_result.all()}
+            for col_def in _CALENDAR_COLUMNS:
+                if col_def["source_name"] not in existing_cols:
+                    dc = DatasetColumn(
+                        dataset_id=cal_id,
+                        source_name=col_def["source_name"],
+                        display_name=col_def["display_name"],
+                        data_type=col_def["data_type"],
+                        column_role=col_def["column_role"],
+                    )
+                    db.add(dc)
+                    logger.info("Added missing calendar column %s", col_def["source_name"])
+            await db.commit()
             return cal_id
 
     # Seed the Parquet file

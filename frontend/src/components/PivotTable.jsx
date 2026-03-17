@@ -6,7 +6,7 @@ function formatValue(val, field = '') {
   if (typeof val === 'number') {
     const isAmt = /amount|revenue|cost|expense|profit|total|sales|price|debit|credit/i.test(field);
     if (isAmt) {
-      return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 }).format(val);
+      return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(val);
     }
     return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(val);
   }
@@ -55,9 +55,32 @@ export default function PivotTable({ data, loading, error }) {
   const colDefs = (data.columns || []).map((c) =>
     typeof c === 'string' ? { field: c, type: 'dimension' } : c
   );
-  const colNames = colDefs.map((c) => c.field);
   const rows = data.rows || [];
   const totals = data.totals || null;
+
+  // Detect pivot measure columns (multiple measure columns = pivoted view)
+  const measureIndices = colDefs.reduce((acc, c, i) => {
+    if (c.type === 'measure') acc.push(i);
+    return acc;
+  }, []);
+  const hasPivotColumns = measureIndices.length > 1;
+
+  // Append a "Total" column when pivoted (sums all measure cols per row)
+  const colNames = hasPivotColumns
+    ? [...colDefs.map((c) => c.field), 'Total']
+    : colDefs.map((c) => c.field);
+  const allColDefs = hasPivotColumns
+    ? [...colDefs, { field: 'Total', type: 'measure' }]
+    : colDefs;
+
+  const appendRowTotal = (row) => {
+    if (!hasPivotColumns) return row;
+    const sum = measureIndices.reduce((s, i) => s + (typeof row[i] === 'number' ? row[i] : 0), 0);
+    return [...row, sum];
+  };
+
+  const rowsWithTotals = rows.map(appendRowTotal);
+  const totalsWithTotal = totals ? appendRowTotal(totals) : null;
 
   const handleSort = (colIdx) => {
     if (sortCol === colIdx) {
@@ -68,7 +91,7 @@ export default function PivotTable({ data, loading, error }) {
     }
   };
 
-  let sortedRows = [...rows];
+  let sortedRows = [...rowsWithTotals];
   if (sortCol !== null) {
     sortedRows.sort((a, b) => {
       const av = a[sortCol];
@@ -81,7 +104,7 @@ export default function PivotTable({ data, loading, error }) {
   }
 
   const isNumericCol = (idx) => {
-    return colDefs[idx]?.type === 'measure' || rows.some((r) => typeof r[idx] === 'number');
+    return allColDefs[idx]?.type === 'measure' || rowsWithTotals.some((r) => typeof r[idx] === 'number');
   };
 
   return (
@@ -129,12 +152,12 @@ export default function PivotTable({ data, loading, error }) {
             </tr>
           ) : (
             sortedRows.map((row, ri) => (
-              <DataRow key={ri} row={row} colNames={colNames} colDefs={colDefs} isNumericCol={isNumericCol} isLast={ri === sortedRows.length - 1 && !totals} />
+              <DataRow key={ri} row={row} colNames={colNames} colDefs={allColDefs} isNumericCol={isNumericCol} isLast={ri === sortedRows.length - 1 && !totalsWithTotal} />
             ))
           )}
-          {totals && (
+          {totalsWithTotal && (
             <tr style={{ background: '#f0f9ff', borderTop: `2px solid ${colors.border}` }}>
-              {totals.map((val, ci) => {
+              {totalsWithTotal.map((val, ci) => {
                 const numeric = typeof val === 'number';
                 // Show "Total" in the first dimension column (where ROLLUP puts NULL)
                 const displayVal = ci === 0 && (val === null || val === undefined) ? 'Total' : val;
@@ -160,9 +183,9 @@ export default function PivotTable({ data, loading, error }) {
           )}
         </tbody>
       </table>
-      {rows.length > 0 && (
+      {rowsWithTotals.length > 0 && (
         <div style={{ padding: `${spacing.xs}px ${spacing.md}px`, borderTop: `1px solid ${colors.border}`, color: colors.textMuted, fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily }}>
-          {data.row_count || rows.length} rows{data.total_row_count > rows.length ? ` of ${data.total_row_count}` : ''}
+          {data.row_count || rowsWithTotals.length} rows{data.total_row_count > rowsWithTotals.length ? ` of ${data.total_row_count}` : ''}
         </div>
       )}
     </div>

@@ -166,22 +166,52 @@ def apply_rule(
     return affected
 
 
-def recompute_scenario(
-    dataset_id: str,
-    scenario_id: str,
-    rules: list[dict],
+def _resolve_dataset_for_rule(
+    rule: dict,
+    dataset_ids: list[str],
     model_id: str,
     data_dir: str,
-) -> int:
-    """Recompute all scenario overrides from scratch by applying rules in order.
+) -> str | None:
+    """Resolve which dataset a rule applies to.
 
-    Returns total affected row count.
+    Priority:
+    1. Explicit rule.dataset_id
+    2. Find the first dataset whose Parquet contains the target_field column
+    3. Fall back to first dataset
     """
-    parquet_path = get_parquet_path(data_dir, model_id, dataset_id)
-    df = pl.read_parquet(parquet_path)
+    explicit = rule.get("dataset_id")
+    if explicit:
+        return explicit
+
+    target_field = rule.get("target_field", "amount")
+    filter_fields = list((rule.get("filter_expr") or {}).keys())
+    check_fields = [target_field] + filter_fields
+
+    for ds_id in dataset_ids:
+        try:
+            path = get_parquet_path(data_dir, model_id, ds_id)
+            schema = pl.read_parquet_schema(path)
+            cols = set(schema.keys()) if isinstance(schema, dict) else {f.name for f in schema}
+            if target_field in cols:
+                # Bonus: check filter fields match too
+                if all(f in cols for f in filter_fields):
+                    return ds_id
+        except Exception:
+            continue
+
+    # Fallback: first dataset
+    return dataset_ids[0] if dataset_ids else None
+
+
+def _apply_rules_to_df(
+    df: pl.DataFrame,
+    rules: list[dict],
+    scenario_id: str,
+) -> tuple[pl.DataFrame, int]:
+    """Apply a list of rules to a DataFrame in order. Returns (modified_df, total_affected)."""
     total_affected = 0
 
-    for i, rule in enumerate(rules):
+    for rule in rules:
         target_field = rule.get("target_field", "amount")
         rule_type = rule.get("rule_type", "multiplier")
         adjustment = rule.get("adjustment", {})
@@ -198,6 +228,10 @@ def recompute_scenario(
 
         affected = df.filter(mask).height
         total_affected += affected
+
+        if target_field not in df.columns:
+            logger.warning("Target field %s not in dataset; skipping rule", target_field)
+            continue
 
         if rule_type == "multiplier":
             factor = adjustment.get("factor", 1.0)
@@ -225,15 +259,82 @@ def recompute_scenario(
             )
 
     df = df.with_columns(pl.lit(f"scenario:{scenario_id}").alias("data_layer"))
+    return df, total_affected
+
+
+def recompute_scenario(
+    scenario_id: str,
+    rules: list[dict],
+    model_id: str,
+    data_dir: str,
+    dataset_ids: list[str] | None = None,
+    dataset_id: str | None = None,
+) -> int:
+    """Recompute all scenario overrides from scratch.
+
+    Supports multi-dataset scenarios: each rule may target a different dataset
+    via its ``dataset_id`` key.  When a rule has no explicit dataset_id the
+    engine auto-resolves by inspecting which dataset contains the target field
+    and filter columns.
+
+    For backward compat a single ``dataset_id`` can still be passed — it is
+    used as the fallback when resolution fails.
+
+    Returns total affected row count.
+    """
+    # Build the list of available dataset IDs
+    all_ds_ids: list[str] = list(dataset_ids or [])
+    if dataset_id and dataset_id not in all_ds_ids:
+        all_ds_ids.insert(0, dataset_id)
+
+    if not all_ds_ids:
+        raise ValueError("No dataset_ids provided for scenario recompute")
+
+    # Group rules by their resolved dataset
+    from collections import defaultdict
+    ds_rules: dict[str, list[dict]] = defaultdict(list)
+    for rule in rules:
+        resolved = _resolve_dataset_for_rule(rule, all_ds_ids, model_id, data_dir)
+        if resolved:
+            ds_rules[resolved].append(rule)
+        else:
+            logger.warning("Could not resolve dataset for rule %r; skipping", rule.get("name"))
+
+    total_affected = 0
+    result_frames: list[pl.DataFrame] = []
+
+    for ds_id, ds_rule_list in ds_rules.items():
+        parquet_path = get_parquet_path(data_dir, model_id, ds_id)
+        try:
+            df = pl.read_parquet(parquet_path)
+        except Exception as exc:
+            logger.warning("Cannot read parquet for dataset %s: %s", ds_id, exc)
+            continue
+
+        df, affected = _apply_rules_to_df(df, ds_rule_list, scenario_id)
+        total_affected += affected
+        result_frames.append(df)
+
+    if not result_frames:
+        logger.warning("No data produced for scenario %s", scenario_id)
+        return 0
+
+    # Concatenate all dataset results (they may have different schemas)
+    # Use diagonal concat to handle differing columns across datasets
+    if len(result_frames) == 1:
+        combined = result_frames[0]
+    else:
+        combined = pl.concat(result_frames, how="diagonal")
+
     scenario_path = get_scenario_path(data_dir, model_id, scenario_id)
-    write_parquet(df, scenario_path)
+    write_parquet(combined, scenario_path)
 
     # Register in DuckDB
     register_dataset(f"sc_{scenario_id}", scenario_path)
 
     logger.info(
-        "Recomputed scenario %s: %d rules, %d total affected rows",
-        scenario_id, len(rules), total_affected,
+        "Recomputed scenario %s: %d rules across %d datasets, %d total affected rows",
+        scenario_id, len(rules), len(ds_rules), total_affected,
     )
     return total_affected
 

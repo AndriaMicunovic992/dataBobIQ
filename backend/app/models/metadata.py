@@ -108,7 +108,7 @@ class Dataset(Base):
         "DatasetColumn", back_populates="dataset", cascade="all, delete-orphan", uselist=True
     )
     scenarios = relationship(
-        "Scenario", back_populates="dataset", cascade="all, delete-orphan", uselist=True
+        "Scenario", back_populates="dataset", uselist=True
     )
     knowledge_entries = relationship(
         "KnowledgeEntry", back_populates="dataset", uselist=True
@@ -146,7 +146,12 @@ class DatasetColumn(Base):
 
 
 class Scenario(Base):
-    """A what-if scenario with delta overlay rules."""
+    """A what-if scenario with delta overlay rules.
+
+    Scenarios are model-level: they can span multiple datasets via per-rule
+    dataset_id targeting.  The top-level dataset_id is kept for backward
+    compat but is nullable.
+    """
 
     __tablename__ = "scenarios"
     __allow_unmapped__ = True
@@ -155,8 +160,8 @@ class Scenario(Base):
     model_id: str | None = Column(
         String, ForeignKey("models.id", ondelete="CASCADE"), nullable=True
     )
-    dataset_id: str = Column(
-        String, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=False
+    dataset_id: str | None = Column(
+        String, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=True
     )
     name: str = Column(String(255), nullable=False)
     description: str | None = Column(Text, nullable=True)
@@ -178,7 +183,11 @@ class Scenario(Base):
 
 
 class ScenarioRule(Base):
-    """A single delta override rule within a scenario."""
+    """A single delta override rule within a scenario.
+
+    Each rule can optionally target a specific dataset via dataset_id.
+    When omitted the engine auto-resolves from the model's datasets.
+    """
 
     __tablename__ = "scenario_rules"
     __allow_unmapped__ = True
@@ -186,6 +195,9 @@ class ScenarioRule(Base):
     id: str = Column(String, primary_key=True, default=_new_uuid)
     scenario_id: str = Column(
         String, ForeignKey("scenarios.id", ondelete="CASCADE"), nullable=False
+    )
+    dataset_id: str | None = Column(
+        String, ForeignKey("datasets.id", ondelete="CASCADE"), nullable=True
     )
     priority: int = Column(Integer, nullable=False, default=0)
     name: str = Column(String(255), nullable=False)

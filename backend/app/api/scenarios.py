@@ -9,8 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import settings
 from app.database import get_db
-from app.models.metadata import Model, Scenario, ScenarioRule
+from app.models.metadata import Dataset, Model, Scenario, ScenarioRule
 from app.schemas.scenarios import (
     ScenarioCreate,
     ScenarioResponse,
@@ -34,19 +35,41 @@ router = APIRouter(tags=["scenarios"])
 # ---------------------------------------------------------------------------
 
 
-def _recompute_from_db(scenario: Scenario, db: AsyncSession) -> int:
-    """Helper to recompute scenario from its rules."""
+async def _get_model_dataset_ids(model_id: str, db: AsyncSession) -> list[str]:
+    """Return all active dataset IDs for a model."""
+    result = await db.execute(
+        select(Dataset.id).where(
+            Dataset.model_id == model_id,
+            Dataset.status == "active",
+        )
+    )
+    return [row[0] for row in result.all()]
+
+
+async def _recompute_from_db(scenario: Scenario, db: AsyncSession) -> int:
+    """Helper to recompute scenario from its rules across all model datasets."""
     rules = [
-        {"name": r.name, "rule_type": r.rule_type, "target_field": r.target_field,
-         "adjustment": r.adjustment, "filter_expr": r.filter_expr,
-         "period_from": r.period_from, "period_to": r.period_to,
-         "distribution": r.distribution}
+        {
+            "name": r.name,
+            "rule_type": r.rule_type,
+            "target_field": r.target_field,
+            "dataset_id": r.dataset_id,
+            "adjustment": r.adjustment,
+            "filter_expr": r.filter_expr,
+            "period_from": r.period_from,
+            "period_to": r.period_to,
+            "distribution": r.distribution,
+        }
         for r in scenario.rules
     ]
+    dataset_ids = await _get_model_dataset_ids(scenario.model_id, db)
     return recompute_scenario_svc(
-        dataset_id=scenario.dataset_id,
         scenario_id=scenario.id,
         rules=rules,
+        model_id=scenario.model_id,
+        data_dir=settings.data_dir,
+        dataset_ids=dataset_ids,
+        dataset_id=scenario.dataset_id,
     )
 
 
@@ -73,7 +96,12 @@ async def create_scenario(
     body: ScenarioCreate,
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioResponse:
-    """Create a new scenario for a model."""
+    """Create a new scenario for a model.
+
+    Scenarios are model-level and can span all datasets. The dataset_id field
+    on the scenario is optional; individual rules can target specific datasets
+    via their own dataset_id field (auto-resolved when omitted).
+    """
     result = await db.execute(select(Model).where(Model.id == model_id))
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
@@ -179,7 +207,7 @@ async def add_rule(
     logger.info("Added rule id=%s to scenario id=%s", rule.id, scenario_id)
 
     try:
-        _recompute_from_db(scenario, db)
+        await _recompute_from_db(scenario, db)
     except Exception as exc:
         logger.warning("Recompute after add_rule failed for scenario %s: %s", scenario_id, exc)
 
@@ -211,7 +239,7 @@ async def delete_rule(
 
     scenario = await _get_scenario_or_404(scenario_id, db)
     try:
-        _recompute_from_db(scenario, db)
+        await _recompute_from_db(scenario, db)
     except Exception as exc:
         logger.warning("Recompute after delete_rule failed for scenario %s: %s", scenario_id, exc)
 
@@ -231,7 +259,7 @@ async def recompute_scenario(
 
     scenario = await _get_scenario_or_404(scenario_id, db)
     try:
-        affected = _recompute_from_db(scenario, db)
+        affected = await _recompute_from_db(scenario, db)
     except Exception as exc:
         logger.exception("Recompute failed for scenario %s: %s", scenario_id, exc)
         raise HTTPException(status_code=500, detail=f"Recompute failed: {exc}") from exc

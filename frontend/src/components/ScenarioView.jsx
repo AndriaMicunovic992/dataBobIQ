@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import {
   useScenarios,
   useScenario,
@@ -42,6 +41,9 @@ function CreateScenarioForm({ modelId, onClose }) {
       <h3 style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.lg, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
         New Scenario
       </h3>
+      <p style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>
+        Scenarios apply across all datasets in this model. Add rules after creation to define what-if adjustments.
+      </p>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md, marginBottom: spacing.md }}>
         <div>
           <label style={labelStyle}>Scenario Name *</label>

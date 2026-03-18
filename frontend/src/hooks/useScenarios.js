@@ -43,19 +43,25 @@ export function useDeleteScenario(modelId) {
   });
 }
 
-export function useAddRule(scenarioId) {
+export function useAddRule(scenarioId, modelId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (rule) => addRule(scenarioId, rule),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['scenario', scenarioId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scenario', scenarioId] });
+      if (modelId) qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
+    },
   });
 }
 
-export function useDeleteRule(scenarioId) {
+export function useDeleteRule(scenarioId, modelId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (ruleId) => deleteRule(scenarioId, ruleId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['scenario', scenarioId] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scenario', scenarioId] });
+      if (modelId) qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
+    },
   });
 }
 
@@ -83,7 +89,7 @@ export function useWaterfall(scenarioId, params) {
   return useQuery({
     queryKey: ['waterfall', scenarioId, params],
     queryFn: () => getWaterfall(scenarioId, params),
-    enabled: !!scenarioId,
+    enabled: !!scenarioId && !!params,
   });
 }
 

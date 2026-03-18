@@ -116,7 +116,14 @@ async def create_scenario(
             db.add(rule)
 
     await db.commit()
-    await db.refresh(scenario)
+
+    # Re-fetch with eager-loaded rules to avoid MissingGreenlet on serialization
+    result = await db.execute(
+        select(Scenario)
+        .options(selectinload(Scenario.rules))
+        .where(Scenario.id == scenario.id)
+    )
+    scenario = result.unique().scalar_one()
     logger.info("Created scenario id=%s model_id=%s", scenario.id, model_id)
     return ScenarioResponse.model_validate(scenario)
 

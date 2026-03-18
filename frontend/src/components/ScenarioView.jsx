@@ -81,7 +81,19 @@ function RuleForm({ scenarioId, metadata, onClose }) {
   const [targetField, setTargetField] = useState('');
   const [value, setValue] = useState('');
   const mut = useAddRule(scenarioId);
-  const measures = metadata?.measures || [];
+
+  // Collect measures from all datasets in the model, deduplicating by name
+  const measures = [];
+  const seen = new Set();
+  for (const ds of metadata?.datasets || []) {
+    for (const m of ds.measures || []) {
+      const key = m.canonical_name || m.field || m.name;
+      if (key && !seen.has(key)) {
+        seen.add(key);
+        measures.push({ ...m, _datasetName: ds.name });
+      }
+    }
+  }
 
   const handleSubmit = () => {
     if (!targetField || !value) return;
@@ -112,8 +124,9 @@ function RuleForm({ scenarioId, metadata, onClose }) {
           <select style={inputStyle} value={targetField} onChange={(e) => setTargetField(e.target.value)}>
             <option value="">Select field...</option>
             {measures.map((m) => {
-              const name = m.canonical_name || m.name;
-              return <option key={name} value={name}>{name}</option>;
+              const fieldName = m.canonical_name || m.field || m.name;
+              const label = m.label || fieldName;
+              return <option key={fieldName} value={fieldName}>{label}</option>;
             })}
           </select>
         </div>

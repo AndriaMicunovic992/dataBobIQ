@@ -97,8 +97,12 @@ function RuleForm({ scenarioId, metadata, onClose }) {
 
   const handleSubmit = () => {
     if (!targetField || !value) return;
+    const numVal = parseFloat(value);
+    const adjustment = ruleType === 'multiplier' ? { factor: numVal }
+      : ruleType === 'offset' ? { offset: numVal }
+      : { value: numVal };
     mut.mutate(
-      { name: name.trim() || `${ruleType} on ${targetField}`, rule_type: ruleType, target_field: targetField, value: parseFloat(value) },
+      { name: name.trim() || `${ruleType} on ${targetField}`, rule_type: ruleType, target_field: targetField, adjustment },
       { onSuccess: onClose }
     );
   };

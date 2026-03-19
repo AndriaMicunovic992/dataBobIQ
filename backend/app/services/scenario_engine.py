@@ -385,7 +385,7 @@ def build_scenario_merge_sql(
     cte_parts.append(actuals_cte)
 
     for sc_id in scenario_ids:
-        sc_view = f"sc_{sc_id}"
+        sc_view = view_name_for(f"sc_{sc_id}")  # -> "ds_sc_{uuid}" (quoted)
         sc_alias = f"sc_{sc_id.replace('-', '_')}"
         sc_cte = (
             f"{sc_alias} AS ("

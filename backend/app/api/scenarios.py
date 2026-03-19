@@ -46,6 +46,16 @@ async def _get_model_dataset_ids(model_id: str, db: AsyncSession) -> list[str]:
     return [row[0] for row in result.all()]
 
 
+async def _resolve_scenario_dataset_id(scenario: Scenario, db: AsyncSession) -> str:
+    """Return scenario.dataset_id, falling back to the first active dataset of its model."""
+    if scenario.dataset_id:
+        return scenario.dataset_id
+    dataset_ids = await _get_model_dataset_ids(scenario.model_id, db)
+    if not dataset_ids:
+        raise HTTPException(status_code=404, detail="No active datasets found for this model")
+    return dataset_ids[0]
+
+
 async def _recompute_from_db(scenario: Scenario, db: AsyncSession) -> int:
     """Helper to recompute scenario from its rules across all model datasets."""
     rules = [
@@ -287,8 +297,6 @@ async def get_variance(
 
     Returns rows with base_value, scenario_value, and absolute/relative variance.
     """
-    await _get_scenario_or_404(scenario_id, db)
-
     group_by_list = [col.strip() for col in group_by.split(",") if col.strip()]
     parsed_filters: dict[str, Any] = {}
     if filters:
@@ -298,9 +306,10 @@ async def get_variance(
             raise HTTPException(status_code=422, detail=f"Invalid filters JSON: {exc}") from exc
 
     scenario = await _get_scenario_or_404(scenario_id, db)
+    dataset_id = await _resolve_scenario_dataset_id(scenario, db)
     try:
         result = compute_variance(
-            dataset_id=scenario.dataset_id,
+            dataset_id=dataset_id,
             scenario_id=scenario_id,
             group_by=group_by_list,
             value_field=value_field,
@@ -325,8 +334,6 @@ async def get_waterfall(
 
     Returns ordered rows suitable for rendering a waterfall chart.
     """
-    await _get_scenario_or_404(scenario_id, db)
-
     parsed_filters: dict[str, Any] = {}
     if filters:
         try:
@@ -335,9 +342,10 @@ async def get_waterfall(
             raise HTTPException(status_code=422, detail=f"Invalid filters JSON: {exc}") from exc
 
     scenario = await _get_scenario_or_404(scenario_id, db)
+    dataset_id = await _resolve_scenario_dataset_id(scenario, db)
     try:
         rows = execute_waterfall(
-            dataset_id=scenario.dataset_id,
+            dataset_id=dataset_id,
             scenario_id=scenario_id,
             breakdown_field=breakdown_field,
             value_field=value_field,

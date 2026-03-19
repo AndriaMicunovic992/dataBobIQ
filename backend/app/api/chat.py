@@ -36,6 +36,42 @@ async def _resolve_dataset_id(model_id: str, dataset_id: str | None, db: AsyncSe
     return row
 
 
+def _translate_event(raw: dict[str, Any]) -> dict[str, Any]:
+    """Translate chat_engine events to the format the frontend expects.
+
+    Backend (chat_engine) emits: {"event": "<type>", "data": <payload>}
+    Frontend (ChatPanel) expects: {"type": "<type>", ...flat fields}
+    """
+    event_type = raw.get("event", raw.get("type", "unknown"))
+    data = raw.get("data")
+
+    if event_type == "text_delta":
+        # Frontend checks: event.type === 'text' and reads event.text
+        return {"type": "text", "text": data or ""}
+
+    if event_type == "tool_executing":
+        # Frontend checks: event.type === 'tool_use', event.name, event.input
+        info = data if isinstance(data, dict) else {}
+        return {"type": "tool_use", "name": info.get("tool", ""), "input": info.get("input", {})}
+
+    if event_type == "tool_result":
+        info = data if isinstance(data, dict) else {}
+        return {"type": "tool_result", "name": info.get("tool", ""), "content": json.dumps(info.get("result", ""), default=str)}
+
+    if event_type == "scenario_created":
+        info = data if isinstance(data, dict) else {}
+        return {"type": "scenario_created", "name": info.get("name", "")}
+
+    if event_type == "done":
+        return {"type": "done"}
+
+    if event_type == "error":
+        return {"type": "error", "data": data or "Unknown error"}
+
+    # Pass through anything else
+    return {"type": event_type, "data": data}
+
+
 async def _sse_generator(
     model_id: str,
     dataset_id: str,
@@ -54,11 +90,16 @@ async def _sse_generator(
             context=context,
             agent_mode=agent_mode,
         ):
-            # stream_chat yields JSON strings; wrap as SSE
-            yield f"data: {event_str}\n\n"
+            # stream_chat yields JSON strings; parse, translate, re-serialize
+            try:
+                raw_event = json.loads(event_str)
+                translated = _translate_event(raw_event)
+                yield f"data: {json.dumps(translated)}\n\n"
+            except (json.JSONDecodeError, TypeError):
+                yield f"data: {event_str}\n\n"
     except Exception as exc:
         logger.exception("Chat stream error for model %s: %s", model_id, exc)
-        error_event: dict[str, Any] = {"type": "error", "message": str(exc)}
+        error_event: dict[str, Any] = {"type": "error", "data": str(exc)}
         yield f"data: {json.dumps(error_event)}\n\n"
     finally:
         yield "data: [DONE]\n\n"

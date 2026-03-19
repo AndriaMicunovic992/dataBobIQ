@@ -14,7 +14,8 @@ class ChatMessage(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    dataset_id: str
-    model_id: str
+    dataset_id: str | None = None  # optional; resolved from model datasets when omitted
+    model_id: str | None = None  # optional; typically provided via URL path
     history: list[ChatMessage] = []
-    agent_mode: str = "data_understanding"  # data_understanding|scenario
+    mode: str = "data"  # data|scenario (frontend sends this)
+    agent_mode: str | None = None  # deprecated alias for mode

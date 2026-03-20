@@ -6,6 +6,7 @@ from typing import Any
 
 import polars as pl
 
+from app.config import settings
 from app.duckdb_engine import execute_query, get_duckdb_conn, register_dataset, view_name_for
 from app.services.storage import get_parquet_path, get_scenario_path, write_parquet
 
@@ -420,6 +421,27 @@ def build_scenario_merge_sql(
     return sql, params
 
 
+def _ensure_scenario_view(scenario_id: str, model_id: str) -> None:
+    """Make sure the DuckDB view for a scenario exists, re-registering from parquet if needed."""
+    view_key = f"sc_{scenario_id}"
+    view_name = view_name_for(view_key)
+    conn = get_duckdb_conn()
+    try:
+        conn.execute(f"SELECT 1 FROM {view_name} LIMIT 0")
+    except Exception:
+        # View doesn't exist — try to register from parquet file on disk
+        scenario_path = get_scenario_path(settings.data_dir, model_id, scenario_id)
+        import os
+        if os.path.exists(scenario_path):
+            register_dataset(view_key, scenario_path)
+            logger.info("Re-registered scenario view %s from %s", view_name, scenario_path)
+        else:
+            raise ValueError(
+                f"Scenario {scenario_id} has no computed data. "
+                f"Please recompute the scenario first."
+            )
+
+
 def compute_variance(
     dataset_id: str,
     scenario_id: str,
@@ -433,6 +455,9 @@ def compute_variance(
 
     Returns a dict with groups, totals, and delta information.
     """
+    # Ensure scenario view is registered (may have been lost on server restart)
+    _ensure_scenario_view(scenario_id, model_id)
+
     sql, params = build_scenario_merge_sql(
         dataset_id, [scenario_id], group_by, value_field, filters
     )
@@ -482,6 +507,7 @@ def execute_waterfall(
     breakdown_field: str,
     value_field: str = "amount",
     filters: dict | None = None,
+    model_id: str = "",
 ) -> list[dict]:
     """Execute a waterfall/bridge chart query comparing actuals to scenario.
 
@@ -493,6 +519,7 @@ def execute_waterfall(
         group_by=[breakdown_field],
         value_field=value_field,
         filters=filters,
+        model_id=model_id,
     )
 
     groups = variance["groups"]

@@ -314,6 +314,7 @@ async def get_variance(
             group_by=group_by_list,
             value_field=value_field,
             filters=parsed_filters if parsed_filters else None,
+            model_id=scenario.model_id,
         )
     except Exception as exc:
         logger.exception("Variance query failed for scenario %s: %s", scenario_id, exc)
@@ -350,6 +351,7 @@ async def get_waterfall(
             breakdown_field=breakdown_field,
             value_field=value_field,
             filters=parsed_filters if parsed_filters else None,
+            model_id=scenario.model_id,
         )
     except Exception as exc:
         logger.exception("Waterfall query failed for scenario %s: %s", scenario_id, exc)

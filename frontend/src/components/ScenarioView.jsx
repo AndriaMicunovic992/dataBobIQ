@@ -350,35 +350,50 @@ function ScenarioDetail({ scenarioId, modelId }) {
   const deleteMut = useDeleteRule(scenarioId, modelId);
   const recomputeMut = useRecompute(scenarioId);
   const [showRuleForm, setShowRuleForm] = useState(false);
+  const [waterfallBreakdown, setWaterfallBreakdown] = useState('');
+  const [waterfallMeasure, setWaterfallMeasure] = useState('');
 
-  // Determine a sensible default breakdown field for the waterfall
-  const firstDimension = useMemo(() => {
+  // Available dimensions and measures for the waterfall selectors
+  const waterfallDimensions = useMemo(() => {
+    const result = [];
+    const seen = new Set();
     for (const ds of metadata?.datasets || []) {
       for (const d of ds.dimensions || []) {
-        if (d.field && d.field !== 'row_id' && d.field !== 'source_key' && d.field !== 'data_layer') {
-          return d.field;
+        if (d.field && !seen.has(d.field) && d.field !== 'row_id' && d.field !== 'source_key' && d.field !== 'data_layer') {
+          seen.add(d.field);
+          result.push(d);
         }
       }
     }
-    return null;
+    return result;
   }, [metadata]);
 
-  const firstMeasure = useMemo(() => {
+  const waterfallMeasures = useMemo(() => {
+    const result = [];
+    const seen = new Set();
     for (const ds of metadata?.datasets || []) {
       for (const m of ds.measures || []) {
-        return m.canonical_name || m.field || m.name;
+        const key = m.canonical_name || m.field || m.name;
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          result.push({ ...m, key });
+        }
       }
     }
-    return 'amount';
+    return result;
   }, [metadata]);
+
+  // Auto-select first available dimension/measure when metadata loads
+  const effectiveBreakdown = waterfallBreakdown || (waterfallDimensions[0]?.field ?? null);
+  const effectiveMeasure = waterfallMeasure || (waterfallMeasures[0]?.key ?? 'amount');
 
   const rules = scenario?.rules || [];
   const hasRules = rules.length > 0;
 
   const waterfallParams = useMemo(() => {
-    if (!firstDimension || !firstMeasure) return null;
-    return { breakdown_field: firstDimension, value_field: firstMeasure };
-  }, [firstDimension, firstMeasure]);
+    if (!effectiveBreakdown || !effectiveMeasure) return null;
+    return { breakdown_field: effectiveBreakdown, value_field: effectiveMeasure };
+  }, [effectiveBreakdown, effectiveMeasure]);
 
   const { data: waterfall } = useWaterfall(
     hasRules ? scenarioId : null,
@@ -474,9 +489,45 @@ function ScenarioDetail({ scenarioId, modelId }) {
       </div>
 
       {/* Waterfall chart */}
-      {waterfall && waterfall.steps && (
-        <Card title="Impact Waterfall" style={{ marginBottom: spacing.lg }}>
-          <WaterfallChart data={waterfall} height={280} />
+      {hasRules && (
+        <Card style={{ marginBottom: spacing.lg }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md, flexWrap: 'wrap' }}>
+            <h4 style={{ margin: 0, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
+              Impact Waterfall
+            </h4>
+            <div style={{ flex: 1 }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
+              <label style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily, whiteSpace: 'nowrap' }}>Breakdown</label>
+              <select
+                style={{ ...inputStyle, marginBottom: 0, minWidth: 140, padding: '4px 8px', fontSize: typography.fontSizes.xs }}
+                value={effectiveBreakdown || ''}
+                onChange={(e) => setWaterfallBreakdown(e.target.value)}
+              >
+                {waterfallDimensions.map((d) => (
+                  <option key={d.field} value={d.field}>{d.label || d.field}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
+              <label style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily, whiteSpace: 'nowrap' }}>Measure</label>
+              <select
+                style={{ ...inputStyle, marginBottom: 0, minWidth: 140, padding: '4px 8px', fontSize: typography.fontSizes.xs }}
+                value={effectiveMeasure || ''}
+                onChange={(e) => setWaterfallMeasure(e.target.value)}
+              >
+                {waterfallMeasures.map((m) => (
+                  <option key={m.key} value={m.key}>{m.label || m.key}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {waterfall && waterfall.steps ? (
+            <WaterfallChart data={waterfall} height={280} />
+          ) : (
+            <div style={{ padding: spacing.lg, textAlign: 'center', color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
+              {effectiveBreakdown ? 'Loading waterfall...' : 'Select a breakdown field to view the waterfall chart.'}
+            </div>
+          )}
         </Card>
       )}
     </div>

@@ -43,11 +43,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # (views are in-memory and lost on restart)
     try:
         from app.database import AsyncSessionLocal
-        from app.models.metadata import Dataset
+        from app.models.metadata import Dataset, Scenario
         from app.duckdb_engine import register_dataset
+        from app.services.storage import get_scenario_path
         from sqlalchemy import select
 
         async with AsyncSessionLocal() as db:
+            # Re-register dataset views
             result = await db.execute(
                 select(Dataset).where(
                     Dataset.status == "active",
@@ -64,6 +66,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         ds.id, ds.parquet_path, exc,
                     )
             logger.info("Re-registered %d active dataset views in DuckDB", len(datasets))
+
+            # Re-register scenario views (parquet paths are deterministic)
+            sc_result = await db.execute(select(Scenario))
+            scenarios = sc_result.scalars().all()
+            sc_count = 0
+            for sc in scenarios:
+                sc_path = get_scenario_path(str(data_dir), sc.model_id, sc.id)
+                if Path(sc_path).exists():
+                    try:
+                        register_dataset(f"sc_{sc.id}", sc_path)
+                        sc_count += 1
+                    except Exception as exc:
+                        logger.warning("Failed to re-register scenario %s: %s", sc.id, exc)
+            if sc_count:
+                logger.info("Re-registered %d scenario views in DuckDB", sc_count)
     except Exception as exc:
         logger.warning("Could not re-register DuckDB views on startup: %s", exc)
 

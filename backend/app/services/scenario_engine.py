@@ -21,10 +21,16 @@ def _cast_filter_value(value: Any, dtype: pl.DataType) -> Any:
     JSONB storage may convert numbers to strings; this ensures is_in()
     and equality checks work regardless.
     """
-    if dtype.is_integer():
-        if isinstance(value, list):
-            return [int(v) for v in value]
-        return int(value)
+    if dtype.is_integer() or dtype.is_numeric():
+        # Try int first, then float
+        try:
+            if isinstance(value, list):
+                return [int(v) for v in value]
+            return int(value)
+        except (ValueError, TypeError):
+            if isinstance(value, list):
+                return [float(v) for v in value]
+            return float(value)
     if dtype.is_float():
         if isinstance(value, list):
             return [float(v) for v in value]
@@ -34,11 +40,9 @@ def _cast_filter_value(value: Any, dtype: pl.DataType) -> Any:
             return [bool(v) for v in value]
         return bool(value)
     # For strings and other types, convert to string
-    if dtype == pl.Utf8 or dtype == pl.String:
-        if isinstance(value, list):
-            return [str(v) for v in value]
-        return str(value)
-    return value
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return str(value)
 
 
 def _build_filter_mask(filter_expr: dict, df: pl.DataFrame) -> pl.Expr:
@@ -55,7 +59,7 @@ def _build_filter_mask(filter_expr: dict, df: pl.DataFrame) -> pl.Expr:
             logger.warning("Cannot cast filter for %s (%s -> %s): %s", field, spec, col_dtype, exc)
             continue
         if isinstance(casted, list):
-            mask = mask & pl.col(field).is_in(casted)
+            mask = mask & pl.col(field).is_in(pl.Series(casted))
         else:
             mask = mask & (pl.col(field) == casted)
     return mask

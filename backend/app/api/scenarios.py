@@ -135,6 +135,14 @@ async def create_scenario(
     )
     scenario = result.unique().scalar_one()
     logger.info("Created scenario id=%s model_id=%s", scenario.id, model_id)
+
+    # Trigger recompute if rules were provided at creation time
+    if scenario.rules:
+        try:
+            await _recompute_from_db(scenario, db)
+        except Exception as exc:
+            logger.warning("Recompute after create failed for scenario %s: %s", scenario.id, exc)
+
     return ScenarioResponse.model_validate(scenario)
 
 
@@ -215,14 +223,16 @@ async def add_rule(
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioRuleResponse:
     """Add a delta-override rule to a scenario and trigger recompute."""
-    scenario = await _get_scenario_or_404(scenario_id, db)
+    await _get_scenario_or_404(scenario_id, db)
 
-    rule = ScenarioRule(scenario_id=scenario.id, **body.model_dump())
+    rule = ScenarioRule(scenario_id=scenario_id, **body.model_dump())
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
     logger.info("Added rule id=%s to scenario id=%s", rule.id, scenario_id)
 
+    # Re-fetch scenario with all rules (including the just-added one)
+    scenario = await _get_scenario_or_404(scenario_id, db)
     try:
         await _recompute_from_db(scenario, db)
     except Exception as exc:

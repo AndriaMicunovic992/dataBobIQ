@@ -15,6 +15,52 @@ logger = logging.getLogger(__name__)
 _SAFE_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _cast_filter_value(value: Any, dtype: pl.DataType) -> Any:
+    """Cast a filter value to match the target Polars column dtype.
+
+    JSONB storage may convert numbers to strings; this ensures is_in()
+    and equality checks work regardless.
+    """
+    if dtype.is_integer():
+        if isinstance(value, list):
+            return [int(v) for v in value]
+        return int(value)
+    if dtype.is_float():
+        if isinstance(value, list):
+            return [float(v) for v in value]
+        return float(value)
+    if dtype == pl.Boolean:
+        if isinstance(value, list):
+            return [bool(v) for v in value]
+        return bool(value)
+    # For strings and other types, convert to string
+    if dtype == pl.Utf8 or dtype == pl.String:
+        if isinstance(value, list):
+            return [str(v) for v in value]
+        return str(value)
+    return value
+
+
+def _build_filter_mask(filter_expr: dict, df: pl.DataFrame) -> pl.Expr:
+    """Build a Polars boolean mask from a filter_expr dict, casting types to match columns."""
+    mask: pl.Expr = pl.lit(True)
+    for field, spec in filter_expr.items():
+        if field not in df.columns:
+            logger.warning("Filter field %s not in dataset, skipping", field)
+            continue
+        col_dtype = df.schema[field]
+        try:
+            casted = _cast_filter_value(spec, col_dtype)
+        except (ValueError, TypeError) as exc:
+            logger.warning("Cannot cast filter for %s (%s -> %s): %s", field, spec, col_dtype, exc)
+            continue
+        if isinstance(casted, list):
+            mask = mask & pl.col(field).is_in(casted)
+        else:
+            mask = mask & (pl.col(field) == casted)
+    return mask
+
+
 def _quote(name: str) -> str:
     if not _SAFE_IDENTIFIER_RE.match(name):
         raise ValueError(f"Unsafe SQL identifier: {name!r}")
@@ -83,16 +129,7 @@ def apply_rule(
     period_to = rule.get("period_to")
 
     # Build boolean mask using polars expressions
-    mask: pl.Expr = pl.lit(True)
-
-    for field, spec in filter_expr.items():
-        if field not in df.columns:
-            logger.warning("Filter field %s not in dataset, skipping", field)
-            continue
-        if isinstance(spec, list):
-            mask = mask & pl.col(field).is_in(spec)
-        else:
-            mask = mask & (pl.col(field) == spec)
+    mask = _build_filter_mask(filter_expr, df)
 
     # Period filter (if period column exists)
     if period_from or period_to:
@@ -218,14 +255,7 @@ def _apply_rules_to_df(
         adjustment = rule.get("adjustment", {})
         filter_expr = rule.get("filter_expr") or {}
 
-        mask: pl.Expr = pl.lit(True)
-        for field, spec in filter_expr.items():
-            if field not in df.columns:
-                continue
-            if isinstance(spec, list):
-                mask = mask & pl.col(field).is_in(spec)
-            else:
-                mask = mask & (pl.col(field) == spec)
+        mask = _build_filter_mask(filter_expr, df)
 
         affected = df.filter(mask).height
         total_affected += affected

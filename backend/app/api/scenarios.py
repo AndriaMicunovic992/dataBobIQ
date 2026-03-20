@@ -135,6 +135,14 @@ async def create_scenario(
     )
     scenario = result.unique().scalar_one()
     logger.info("Created scenario id=%s model_id=%s", scenario.id, model_id)
+
+    # Trigger recompute if rules were provided at creation time
+    if scenario.rules:
+        try:
+            await _recompute_from_db(scenario, db)
+        except Exception as exc:
+            logger.warning("Recompute after create failed for scenario %s: %s", scenario.id, exc)
+
     return ScenarioResponse.model_validate(scenario)
 
 
@@ -215,18 +223,21 @@ async def add_rule(
     db: AsyncSession = Depends(get_db),
 ) -> ScenarioRuleResponse:
     """Add a delta-override rule to a scenario and trigger recompute."""
-    scenario = await _get_scenario_or_404(scenario_id, db)
+    await _get_scenario_or_404(scenario_id, db)
 
-    rule = ScenarioRule(scenario_id=scenario.id, **body.model_dump())
+    rule = ScenarioRule(scenario_id=scenario_id, **body.model_dump())
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
     logger.info("Added rule id=%s to scenario id=%s", rule.id, scenario_id)
 
+    # Re-fetch scenario with all rules (including the just-added one)
+    scenario = await _get_scenario_or_404(scenario_id, db)
     try:
-        await _recompute_from_db(scenario, db)
+        affected = await _recompute_from_db(scenario, db)
+        logger.info("Recompute after add_rule: scenario %s, affected=%d, rules=%d", scenario_id, affected, len(scenario.rules))
     except Exception as exc:
-        logger.warning("Recompute after add_rule failed for scenario %s: %s", scenario_id, exc)
+        logger.exception("Recompute after add_rule failed for scenario %s: %s", scenario_id, exc)
 
     return ScenarioRuleResponse.model_validate(rule)
 
@@ -307,20 +318,30 @@ async def get_variance(
 
     scenario = await _get_scenario_or_404(scenario_id, db)
     dataset_id = await _resolve_scenario_dataset_id(scenario, db)
-    try:
-        result = compute_variance(
-            dataset_id=dataset_id,
-            scenario_id=scenario_id,
-            group_by=group_by_list,
-            value_field=value_field,
-            filters=parsed_filters if parsed_filters else None,
-            model_id=scenario.model_id,
-        )
-    except Exception as exc:
-        logger.exception("Variance query failed for scenario %s: %s", scenario_id, exc)
-        raise HTTPException(status_code=500, detail=f"Variance computation failed: {exc}") from exc
 
-    return result
+    for attempt in range(2):
+        try:
+            result = compute_variance(
+                dataset_id=dataset_id,
+                scenario_id=scenario_id,
+                group_by=group_by_list,
+                value_field=value_field,
+                filters=parsed_filters if parsed_filters else None,
+                model_id=scenario.model_id,
+            )
+            return result
+        except (ValueError, Exception) as exc:
+            if attempt == 0 and "no computed data" in str(exc).lower():
+                logger.info("Scenario %s missing parquet, auto-recomputing...", scenario_id)
+                try:
+                    await _recompute_from_db(scenario, db)
+                    continue
+                except Exception as recomp_exc:
+                    raise HTTPException(status_code=500, detail=f"Auto-recompute failed: {recomp_exc}") from recomp_exc
+            logger.exception("Variance query failed for scenario %s: %s", scenario_id, exc)
+            raise HTTPException(status_code=500, detail=f"Variance computation failed: {exc}") from exc
+
+    raise HTTPException(status_code=500, detail="Variance computation failed after auto-recompute")
 
 
 @router.get("/scenarios/{scenario_id}/waterfall")
@@ -344,17 +365,27 @@ async def get_waterfall(
 
     scenario = await _get_scenario_or_404(scenario_id, db)
     dataset_id = await _resolve_scenario_dataset_id(scenario, db)
-    try:
-        rows = execute_waterfall(
-            dataset_id=dataset_id,
-            scenario_id=scenario_id,
-            breakdown_field=breakdown_field,
-            value_field=value_field,
-            filters=parsed_filters if parsed_filters else None,
-            model_id=scenario.model_id,
-        )
-    except Exception as exc:
-        logger.exception("Waterfall query failed for scenario %s: %s", scenario_id, exc)
-        raise HTTPException(status_code=500, detail=f"Waterfall computation failed: {exc}") from exc
+
+    for attempt in range(2):
+        try:
+            rows = execute_waterfall(
+                dataset_id=dataset_id,
+                scenario_id=scenario_id,
+                breakdown_field=breakdown_field,
+                value_field=value_field,
+                filters=parsed_filters if parsed_filters else None,
+                model_id=scenario.model_id,
+            )
+            break
+        except (ValueError, Exception) as exc:
+            if attempt == 0 and "no computed data" in str(exc).lower():
+                logger.info("Scenario %s missing parquet, auto-recomputing...", scenario_id)
+                try:
+                    await _recompute_from_db(scenario, db)
+                    continue
+                except Exception as recomp_exc:
+                    raise HTTPException(status_code=500, detail=f"Auto-recompute failed: {recomp_exc}") from recomp_exc
+            logger.exception("Waterfall query failed for scenario %s: %s", scenario_id, exc)
+            raise HTTPException(status_code=500, detail=f"Waterfall computation failed: {exc}") from exc
 
     return {"scenario_id": scenario_id, "steps": rows}

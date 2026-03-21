@@ -36,6 +36,15 @@ async def _resolve_dataset_id(model_id: str, dataset_id: str | None, db: AsyncSe
     return row
 
 
+async def _build_dataset_map(model_id: str, db: AsyncSession) -> dict[str, str]:
+    """Build a name→id map for all active datasets in the model."""
+    result = await db.execute(
+        select(Dataset.name, Dataset.id)
+        .where(Dataset.model_id == model_id, Dataset.status == "active")
+    )
+    return {name: ds_id for name, ds_id in result.all()}
+
+
 def _translate_event(raw: dict[str, Any]) -> dict[str, Any]:
     """Translate chat_engine events to the format the frontend expects.
 
@@ -78,6 +87,7 @@ async def _sse_generator(
     request: ChatRequest,
     context: str,
     agent_mode: str,
+    dataset_map: dict[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Wrap chat_engine.stream_chat() events as SSE-formatted strings."""
     try:
@@ -89,6 +99,7 @@ async def _sse_generator(
             history=history,
             context=context,
             agent_mode=agent_mode,
+            dataset_map=dataset_map,
         ):
             # stream_chat yields JSON strings; parse, translate, re-serialize
             try:
@@ -133,16 +144,18 @@ async def chat(
     if agent_mode in ("data_understanding", "data"):
         agent_mode = "data"
 
-    # Build AI context
+    # Build AI context and dataset map
     try:
         context = await build_ai_context(model_id, dataset_id, db)
     except Exception as exc:
         logger.warning("Failed to build AI context: %s", exc)
         context = "<data_context>Context unavailable</data_context>"
 
+    dataset_map = await _build_dataset_map(model_id, db)
+
     logger.info(
-        "Chat request model_id=%s dataset_id=%s mode=%s history=%d",
-        model_id, dataset_id, agent_mode, len(body.history),
+        "Chat request model_id=%s dataset_id=%s mode=%s history=%d datasets=%d",
+        model_id, dataset_id, agent_mode, len(body.history), len(dataset_map),
     )
 
     return StreamingResponse(
@@ -152,6 +165,7 @@ async def chat(
             request=body,
             context=context,
             agent_mode=agent_mode,
+            dataset_map=dataset_map,
         ),
         media_type="text/event-stream",
         headers={

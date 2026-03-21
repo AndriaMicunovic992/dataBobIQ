@@ -553,6 +553,22 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
     return sql
 
 
+def _sanitize_value(val: Any) -> Any:
+    """Convert non-JSON-serializable types (date, datetime, Decimal) to strings."""
+    import datetime
+    import decimal
+    if isinstance(val, (datetime.date, datetime.datetime, datetime.time)):
+        return val.isoformat()
+    if isinstance(val, decimal.Decimal):
+        return float(val)
+    return val
+
+
+def _sanitize_rows(rows: list[dict]) -> list[dict]:
+    """Ensure all values in query result rows are JSON-serializable."""
+    return [{k: _sanitize_value(v) for k, v in row.items()} for row in rows]
+
+
 def _resolve_view_for_tool(
     tool_input: dict,
     default_dataset_id: str,
@@ -612,7 +628,7 @@ async def _execute_tool(
             except ValueError as exc:
                 return {"error": str(exc)}, None
         try:
-            rows = execute_query(sql_safe)
+            rows = _sanitize_rows(execute_query(sql_safe))
             return {"rows": rows, "row_count": len(rows)}, None
         except Exception as exc:
             cols = _get_view_columns(view)
@@ -633,7 +649,7 @@ async def _execute_tool(
         sql = f'SELECT DISTINCT "{col}" FROM {view} WHERE {where_clause} ORDER BY "{col}" LIMIT {limit}'
         try:
             rows = execute_query(sql)
-            values = [r[col] for r in rows]
+            values = [_sanitize_value(r[col]) for r in rows]
             return {"column": col, "values": values, "count": len(values)}, None
         except Exception as exc:
             cols = _get_view_columns(view)
@@ -1093,7 +1109,7 @@ async def stream_chat(
                 yield json.dumps({
                     "event": special_event or "tool_result",
                     "data": {"tool": tool_name, "result": result},
-                })
+                }, default=str)
 
                 tool_results.append({
                     "type": "tool_result",

@@ -50,7 +50,7 @@ async def create_knowledge_entry(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
-    entry = KnowledgeEntry(model_id=model_id, **body.model_dump())
+    entry = KnowledgeEntry(model_id=model_id, **body.to_db_dict())
     db.add(entry)
     await db.commit()
     await db.refresh(entry)
@@ -99,9 +99,12 @@ async def update_knowledge_entry(
     """Update a knowledge base entry."""
     entry = await _get_entry_or_404(entry_id, db)
 
+    # Only update DB-mapped fields, skip frontend-only fields
+    db_fields = {"entry_type", "plain_text", "content", "confidence", "dataset_id"}
     update_data = body.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        setattr(entry, field, value)
+        if field in db_fields:
+            setattr(entry, field, value)
 
     await db.commit()
     await db.refresh(entry)

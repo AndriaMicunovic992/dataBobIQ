@@ -553,17 +553,46 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
     return sql
 
 
+def _resolve_view_for_tool(
+    tool_input: dict,
+    default_dataset_id: str,
+    dataset_map: dict[str, str] | None,
+) -> str:
+    """Resolve the DuckDB view name from tool_input's dataset_name or fall back to default."""
+    ds_name = tool_input.get("dataset_name")
+    if ds_name and dataset_map:
+        # Try exact match first, then case-insensitive
+        ds_id = dataset_map.get(ds_name)
+        if not ds_id:
+            lower_map = {k.lower(): v for k, v in dataset_map.items()}
+            ds_id = lower_map.get(ds_name.lower())
+        if ds_id:
+            return view_name_for(ds_id)
+        logger.warning("dataset_name %r not found in map, using default", ds_name)
+    return view_name_for(default_dataset_id)
+
+
+def _get_view_columns(view: str) -> list[str]:
+    """Return column names for a DuckDB view (for error messages)."""
+    try:
+        rows = execute_query(f"SELECT column_name FROM (DESCRIBE {view})")
+        return [r["column_name"] for r in rows]
+    except Exception:
+        return []
+
+
 async def _execute_tool(
     tool_name: str,
     tool_input: dict,
     dataset_id: str,
     model_id: str,
+    dataset_map: dict[str, str] | None = None,
 ) -> tuple[Any, str | None]:
     """Execute a chat tool call. Returns (result, event_type).
 
     event_type is used for SSE event naming (e.g. 'scenario_rules', 'knowledge_saved').
     """
-    view = view_name_for(dataset_id)
+    view = _resolve_view_for_tool(tool_input, dataset_id, dataset_map)
 
     if tool_name == "query_data":
         # Support both structured params (new) and raw SQL (legacy fallback)
@@ -586,14 +615,16 @@ async def _execute_tool(
             rows = execute_query(sql_safe)
             return {"rows": rows, "row_count": len(rows)}, None
         except Exception as exc:
-            return {"error": str(exc)}, None
+            cols = _get_view_columns(view)
+            return {"error": str(exc), "available_columns": cols}, None
 
     elif tool_name == "list_dimension_values":
         col = tool_input.get("column_name") or tool_input.get("column", "")
         search = tool_input.get("search", "")
         limit = min(int(tool_input.get("limit", 100)), 500)
         if not _validate_identifier(col):
-            return {"error": f"Invalid column name: {col!r}"}, None
+            cols = _get_view_columns(view)
+            return {"error": f"Invalid column name: {col!r}", "available_columns": cols}, None
         where_parts = [f'"{col}" IS NOT NULL']
         if search:
             escaped_search = search.replace("'", "''")
@@ -605,7 +636,8 @@ async def _execute_tool(
             values = [r[col] for r in rows]
             return {"column": col, "values": values, "count": len(values)}, None
         except Exception as exc:
-            return {"error": str(exc)}, None
+            cols = _get_view_columns(view)
+            return {"error": str(exc), "available_columns": cols}, None
 
     elif tool_name == "save_knowledge":
         return {
@@ -945,6 +977,7 @@ async def stream_chat(
     history: list[dict],
     context: str,
     agent_mode: str = "data",
+    dataset_map: dict[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """SSE streaming chat with Claude tool-use loop.
 
@@ -1053,7 +1086,8 @@ async def stream_chat(
                 })
 
                 result, special_event = await _execute_tool(
-                    tool_name, tool_input, dataset_id, model_id
+                    tool_name, tool_input, dataset_id, model_id,
+                    dataset_map=dataset_map,
                 )
 
                 yield json.dumps({

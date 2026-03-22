@@ -569,6 +569,15 @@ def _sanitize_rows(rows: list[dict]) -> list[dict]:
     return [{k: _sanitize_value(v) for k, v in row.items()} for row in rows]
 
 
+def _sanitize_rows_dict(d: dict) -> dict:
+    """Recursively sanitize a nested dict/list structure for JSON serialization."""
+    if isinstance(d, dict):
+        return {k: _sanitize_rows_dict(v) for k, v in d.items()}
+    if isinstance(d, list):
+        return [_sanitize_rows_dict(item) for item in d]
+    return _sanitize_value(d)
+
+
 def _resolve_view_for_tool(
     tool_input: dict,
     default_dataset_id: str,
@@ -626,7 +635,8 @@ async def _execute_tool(
             try:
                 sql_safe = _build_query_sql(view, tool_input)
             except ValueError as exc:
-                return {"error": str(exc)}, None
+                cols = _get_view_columns(view)
+                return {"error": str(exc), "available_columns": cols}, None
         try:
             rows = _sanitize_rows(execute_query(sql_safe))
             return {"rows": rows, "row_count": len(rows)}, None
@@ -700,6 +710,7 @@ async def _execute_tool(
 
     elif tool_name == "compare_scenarios":
         from app.services.scenario_engine import compute_variance
+        from app.config import settings as app_settings
         scenario_ids = tool_input.get("scenario_ids", [])
         # Support single ID for backwards compat
         if not scenario_ids:
@@ -710,8 +721,12 @@ async def _execute_tool(
         try:
             results = []
             for sid in scenario_ids:
-                result = compute_variance(dataset_id, sid, group_by, value_field)
-                results.append({"scenario_id": sid, **result})
+                result = compute_variance(
+                    dataset_id, sid, group_by, value_field,
+                    model_id=model_id,
+                    data_dir=app_settings.data_dir,
+                )
+                results.append(_sanitize_rows_dict({"scenario_id": sid, **result}))
             return {"comparisons": results} if len(results) > 1 else results[0], None
         except Exception as exc:
             return {"error": str(exc)}, None

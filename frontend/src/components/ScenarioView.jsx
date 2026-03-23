@@ -344,6 +344,93 @@ function formatAdjustment(rule) {
   return `= ${adj.value ?? '?'}`;
 }
 
+function formatCompact(val) {
+  if (val === null || val === undefined) return '—';
+  const abs = Math.abs(val);
+  if (abs >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
+  return Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+function VarianceTable({ variance, breakdownField }) {
+  const groups = variance.groups || [];
+
+  const cellStyle = {
+    padding: `${spacing.xs}px ${spacing.sm}px`,
+    fontSize: typography.fontSizes.sm,
+    fontFamily: 'monospace',
+    borderBottom: `1px solid ${colors.border}`,
+    textAlign: 'right',
+    whiteSpace: 'nowrap',
+  };
+  const headerCell = {
+    ...cellStyle,
+    fontFamily: typography.fontFamily,
+    fontWeight: typography.fontWeights.semibold,
+    color: colors.textSecondary,
+    fontSize: typography.fontSizes.xs,
+    textTransform: 'uppercase',
+    letterSpacing: '0.03em',
+    background: colors.bgMuted,
+    position: 'sticky',
+    top: 0,
+  };
+
+  return (
+    <div style={{ overflowX: 'auto', borderRadius: radius.md, border: `1px solid ${colors.border}` }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ ...headerCell, textAlign: 'left' }}>{breakdownField}</th>
+            <th style={headerCell}>Actuals</th>
+            <th style={headerCell}>Scenario</th>
+            <th style={headerCell}>Delta</th>
+            <th style={headerCell}>%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g, i) => {
+            const label = Object.values(g.group).join(' / ') || `Row ${i + 1}`;
+            const deltaColor = g.delta > 0 ? colors.success : g.delta < 0 ? colors.danger : colors.textMuted;
+            return (
+              <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : colors.bgMuted }}>
+                <td style={{ ...cellStyle, textAlign: 'left', fontFamily: typography.fontFamily, color: colors.textPrimary, fontWeight: typography.fontWeights.medium }}>{label}</td>
+                <td style={{ ...cellStyle, color: colors.textPrimary }}>{formatCompact(g.actual)}</td>
+                <td style={{ ...cellStyle, color: colors.textPrimary }}>{formatCompact(g.scenario)}</td>
+                <td style={{ ...cellStyle, color: deltaColor, fontWeight: typography.fontWeights.medium }}>
+                  {g.delta > 0 ? '+' : ''}{formatCompact(g.delta)}
+                </td>
+                <td style={{ ...cellStyle, color: deltaColor, fontSize: typography.fontSizes.xs }}>
+                  {g.delta_pct != null ? `${g.delta_pct > 0 ? '+' : ''}${g.delta_pct.toFixed(1)}%` : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ background: colors.bgMuted }}>
+            <td style={{ ...cellStyle, textAlign: 'left', fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.bold, color: colors.textPrimary, borderBottom: 'none' }}>Total</td>
+            <td style={{ ...cellStyle, fontWeight: typography.fontWeights.bold, color: colors.textPrimary, borderBottom: 'none' }}>{formatCompact(variance.total_actual)}</td>
+            <td style={{ ...cellStyle, fontWeight: typography.fontWeights.bold, color: colors.textPrimary, borderBottom: 'none' }}>{formatCompact(variance.total_scenario)}</td>
+            <td style={{
+              ...cellStyle, fontWeight: typography.fontWeights.bold, borderBottom: 'none',
+              color: variance.total_delta > 0 ? colors.success : variance.total_delta < 0 ? colors.danger : colors.textMuted,
+            }}>
+              {variance.total_delta > 0 ? '+' : ''}{formatCompact(variance.total_delta)}
+            </td>
+            <td style={{
+              ...cellStyle, fontWeight: typography.fontWeights.bold, borderBottom: 'none', fontSize: typography.fontSizes.xs,
+              color: variance.total_delta > 0 ? colors.success : variance.total_delta < 0 ? colors.danger : colors.textMuted,
+            }}>
+              {variance.total_delta_pct != null ? `${variance.total_delta_pct > 0 ? '+' : ''}${variance.total_delta_pct.toFixed(1)}%` : '—'}
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 function ScenarioDetail({ scenarioId, modelId }) {
   const { data: scenario } = useScenario(scenarioId);
   const { data: metadata } = useMetadata(modelId);
@@ -412,6 +499,24 @@ function ScenarioDetail({ scenarioId, modelId }) {
   const { data: waterfall } = useWaterfall(
     hasRules ? scenarioId : null,
     waterfallParams,
+  );
+
+  // Build variance params for the comparison table (reuses same breakdown/measure/joins)
+  const varianceParams = useMemo(() => {
+    if (!effectiveBreakdown || !effectiveMeasure) return null;
+    const fieldMap = metadata?.fieldDatasetMap || {};
+    const factDatasetId = fieldMap[effectiveMeasure] || metadata?.datasets?.[0]?.id;
+    const breakdownDatasetId = fieldMap[effectiveBreakdown];
+    const params = { group_by: effectiveBreakdown, value_field: effectiveMeasure };
+    if (breakdownDatasetId && factDatasetId && breakdownDatasetId !== factDatasetId) {
+      params.join_dimensions = JSON.stringify({ [effectiveBreakdown]: breakdownDatasetId });
+    }
+    return params;
+  }, [effectiveBreakdown, effectiveMeasure, metadata]);
+
+  const { data: variance, isLoading: varianceLoading, error: varianceError } = useVariance(
+    hasRules ? scenarioId : null,
+    varianceParams,
   );
 
   if (!scenario) {
@@ -502,12 +607,12 @@ function ScenarioDetail({ scenarioId, modelId }) {
         )}
       </div>
 
-      {/* Waterfall chart */}
+      {/* Scenario impact analysis */}
       {hasRules && (
         <Card style={{ marginBottom: spacing.lg }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: spacing.md, marginBottom: spacing.md, flexWrap: 'wrap' }}>
             <h4 style={{ margin: 0, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
-              Impact Waterfall
+              Scenario Impact
             </h4>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
@@ -535,11 +640,28 @@ function ScenarioDetail({ scenarioId, modelId }) {
               </select>
             </div>
           </div>
-          {waterfall && waterfall.steps ? (
-            <WaterfallChart data={waterfall} height={280} />
+
+          {/* Comparison table */}
+          {varianceLoading ? (
+            <div style={{ padding: spacing.lg, textAlign: 'center', color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
+              Loading comparison...
+            </div>
+          ) : varianceError ? (
+            <div style={{ padding: spacing.md, color: colors.danger, fontSize: typography.fontSizes.sm, fontFamily: typography.fontFamily, background: '#fef2f2', borderRadius: radius.md, border: '1px solid #fecaca' }}>
+              {varianceError.message}
+            </div>
+          ) : variance && variance.groups?.length > 0 ? (
+            <VarianceTable variance={variance} breakdownField={effectiveBreakdown} />
           ) : (
             <div style={{ padding: spacing.lg, textAlign: 'center', color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
-              {effectiveBreakdown ? 'Loading waterfall...' : 'Select a breakdown field to view the waterfall chart.'}
+              {effectiveBreakdown ? 'No variance data available.' : 'Select a breakdown field to compare.'}
+            </div>
+          )}
+
+          {/* Waterfall chart (below table when data is available) */}
+          {waterfall && waterfall.steps && waterfall.steps.length > 0 && (
+            <div style={{ marginTop: spacing.lg }}>
+              <WaterfallChart data={waterfall} height={280} />
             </div>
           )}
         </Card>

@@ -666,19 +666,76 @@ async def _execute_tool(
             return {"error": str(exc), "available_columns": cols}, None
 
     elif tool_name == "save_knowledge":
-        return {
-            "saved": True,
-            "entry_type": tool_input.get("entry_type"),
-            "plain_text": tool_input.get("plain_text"),
-            "content": tool_input.get("content", {}),
-            "confidence": tool_input.get("confidence", "suggested"),
-            "_model_id": model_id,
-            "_dataset_id": dataset_id,
-        }, "knowledge_saved"
+        from app.database import AsyncSessionLocal
+        from app.models.metadata import KnowledgeEntry
+        entry_type = tool_input.get("entry_type", "note")
+        plain_text = tool_input.get("plain_text", "")
+        content = tool_input.get("content", {})
+        confidence = tool_input.get("confidence", "suggested")
+        if not plain_text:
+            return {"error": "plain_text is required"}, None
+        try:
+            async with AsyncSessionLocal() as db:
+                entry = KnowledgeEntry(
+                    model_id=model_id,
+                    dataset_id=dataset_id,
+                    entry_type=entry_type,
+                    plain_text=plain_text,
+                    content=content if isinstance(content, dict) else {"description": content},
+                    confidence=confidence,
+                    source="ai_agent",
+                )
+                db.add(entry)
+                await db.commit()
+                await db.refresh(entry)
+                return {
+                    "saved": True,
+                    "id": entry.id,
+                    "entry_type": entry.entry_type,
+                    "plain_text": entry.plain_text,
+                    "confidence": entry.confidence,
+                }, "knowledge_saved"
+        except Exception as exc:
+            logger.exception("Failed to save knowledge entry: %s", exc)
+            return {"error": f"Failed to save: {exc}"}, None
 
     elif tool_name == "list_knowledge":
-        # Return placeholder; real implementation queries DB
-        return {"entries": [], "note": "Knowledge retrieval requires DB session"}, None
+        from app.database import AsyncSessionLocal
+        from app.models.metadata import KnowledgeEntry
+        from sqlalchemy import select as sa_select
+        try:
+            async with AsyncSessionLocal() as db:
+                query = (
+                    sa_select(KnowledgeEntry)
+                    .where(KnowledgeEntry.model_id == model_id)
+                    .order_by(KnowledgeEntry.created_at.desc())
+                    .limit(30)
+                )
+                entry_type_filter = tool_input.get("entry_type")
+                if entry_type_filter:
+                    query = query.where(KnowledgeEntry.entry_type == entry_type_filter)
+                search_text = tool_input.get("search")
+                if search_text:
+                    query = query.where(KnowledgeEntry.plain_text.ilike(f"%{search_text}%"))
+                result = await db.execute(query)
+                entries = result.scalars().all()
+                return {
+                    "entries": [
+                        {
+                            "id": e.id,
+                            "entry_type": e.entry_type,
+                            "plain_text": e.plain_text,
+                            "content": e.content,
+                            "confidence": e.confidence,
+                            "source": e.source,
+                        }
+                        for e in entries
+                    ],
+                    "count": len(entries),
+                }, None
+        except Exception as exc:
+            logger.exception("Failed to list knowledge: %s", exc)
+            return {"error": f"Failed to list knowledge: {exc}"}, None
 
     elif tool_name == "suggest_mapping":
         return {
@@ -689,24 +746,213 @@ async def _execute_tool(
         }, "mapping_suggested"
 
     elif tool_name == "create_scenario":
-        return {
-            "scenario_created": True,
-            "name": tool_input.get("name"),
-            "base_config": tool_input.get("base_config", {}),
-            "rules": tool_input.get("rules", []),
-            "color": tool_input.get("color"),
-            "_model_id": model_id,
-        }, "scenario_created"
+        from app.database import AsyncSessionLocal
+        from app.models.metadata import Scenario, ScenarioRule
+        name = tool_input.get("name", "Untitled Scenario")
+        base_config = tool_input.get("base_config", {})
+        rules_input = tool_input.get("rules", [])
+        color = tool_input.get("color")
+        try:
+            async with AsyncSessionLocal() as db:
+                scenario = Scenario(
+                    model_id=model_id,
+                    name=name,
+                    base_config=base_config,
+                    color=color,
+                )
+                db.add(scenario)
+                await db.flush()  # get scenario.id
+
+                for i, r in enumerate(rules_input):
+                    # Normalize rule format from agent (type/factor) to DB (rule_type/adjustment)
+                    rule_type = r.get("rule_type") or r.get("type", "multiplier")
+                    adjustment = r.get("adjustment", {})
+                    if not adjustment:
+                        if "factor" in r:
+                            adjustment = {"factor": r["factor"]}
+                        elif "offset" in r:
+                            adjustment = {"offset": r["offset"]}
+                        elif "value" in r:
+                            adjustment = {"value": r["value"]}
+                    rule = ScenarioRule(
+                        scenario_id=scenario.id,
+                        name=r.get("name", f"Rule {i + 1}"),
+                        rule_type=rule_type,
+                        target_field=r.get("target_field", "amount"),
+                        adjustment=adjustment,
+                        filter_expr=r.get("filter_expr") or r.get("filters"),
+                        period_from=r.get("period_from"),
+                        period_to=r.get("period_to"),
+                        priority=i,
+                    )
+                    db.add(rule)
+
+                await db.commit()
+                await db.refresh(scenario)
+
+                # Trigger recompute
+                try:
+                    from app.services.scenario_engine import recompute_scenario as recompute_svc
+                    from app.config import settings as app_settings
+                    from sqlalchemy import select as sa_select
+                    from app.models.metadata import Dataset
+                    ds_result = await db.execute(
+                        sa_select(Dataset.id).where(
+                            Dataset.model_id == model_id, Dataset.status == "active"
+                        )
+                    )
+                    ds_ids = [row[0] for row in ds_result.all()]
+                    # Re-fetch rules
+                    from sqlalchemy.orm import selectinload
+                    sc = await db.execute(
+                        sa_select(Scenario)
+                        .where(Scenario.id == scenario.id)
+                        .options(selectinload(Scenario.rules))
+                    )
+                    sc_obj = sc.scalar_one()
+                    rule_dicts = [
+                        {
+                            "name": rl.name, "rule_type": rl.rule_type,
+                            "target_field": rl.target_field, "adjustment": rl.adjustment,
+                            "filter_expr": rl.filter_expr, "period_from": rl.period_from,
+                            "period_to": rl.period_to, "distribution": rl.distribution,
+                        }
+                        for rl in sc_obj.rules
+                    ]
+                    recompute_svc(
+                        scenario_id=scenario.id, rules=rule_dicts,
+                        model_id=model_id, data_dir=app_settings.data_dir,
+                        dataset_ids=ds_ids,
+                    )
+                except Exception as exc:
+                    logger.warning("Recompute after create_scenario failed: %s", exc)
+
+                return {
+                    "scenario_created": True,
+                    "scenario_id": scenario.id,
+                    "name": scenario.name,
+                    "rules_count": len(rules_input),
+                }, "scenario_created"
+        except Exception as exc:
+            logger.exception("Failed to create scenario: %s", exc)
+            return {"error": f"Failed to create scenario: {exc}"}, None
 
     elif tool_name == "add_scenario_rule":
-        return {
-            "rules_added": True,
-            "scenario_id": tool_input.get("scenario_id"),
-            "rules": tool_input.get("rules", []),
-        }, "scenario_rules"
+        from app.database import AsyncSessionLocal
+        from app.models.metadata import Scenario, ScenarioRule
+        from sqlalchemy import select as sa_select
+        from sqlalchemy.orm import selectinload
+        scenario_id_input = tool_input.get("scenario_id", "")
+        rules_input = tool_input.get("rules", [])
+        if not scenario_id_input:
+            return {"error": "scenario_id is required"}, None
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    sa_select(Scenario).where(Scenario.id == scenario_id_input)
+                )
+                scenario = result.scalar_one_or_none()
+                if not scenario:
+                    return {"error": f"Scenario {scenario_id_input} not found"}, None
+
+                for i, r in enumerate(rules_input):
+                    rule_type = r.get("rule_type") or r.get("type", "multiplier")
+                    adjustment = r.get("adjustment", {})
+                    if not adjustment:
+                        if "factor" in r:
+                            adjustment = {"factor": r["factor"]}
+                        elif "offset" in r:
+                            adjustment = {"offset": r["offset"]}
+                        elif "value" in r:
+                            adjustment = {"value": r["value"]}
+                    rule = ScenarioRule(
+                        scenario_id=scenario_id_input,
+                        name=r.get("name", f"Rule {i + 1}"),
+                        rule_type=rule_type,
+                        target_field=r.get("target_field", "amount"),
+                        adjustment=adjustment,
+                        filter_expr=r.get("filter_expr") or r.get("filters"),
+                        period_from=r.get("period_from"),
+                        period_to=r.get("period_to"),
+                        priority=i,
+                    )
+                    db.add(rule)
+                await db.commit()
+
+                # Trigger recompute
+                try:
+                    from app.services.scenario_engine import recompute_scenario as recompute_svc
+                    from app.config import settings as app_settings
+                    from app.models.metadata import Dataset
+                    ds_result = await db.execute(
+                        sa_select(Dataset.id).where(
+                            Dataset.model_id == scenario.model_id,
+                            Dataset.status == "active",
+                        )
+                    )
+                    ds_ids = [row[0] for row in ds_result.all()]
+                    sc = await db.execute(
+                        sa_select(Scenario)
+                        .where(Scenario.id == scenario_id_input)
+                        .options(selectinload(Scenario.rules))
+                    )
+                    sc_obj = sc.scalar_one()
+                    rule_dicts = [
+                        {
+                            "name": rl.name, "rule_type": rl.rule_type,
+                            "target_field": rl.target_field, "adjustment": rl.adjustment,
+                            "filter_expr": rl.filter_expr, "period_from": rl.period_from,
+                            "period_to": rl.period_to, "distribution": rl.distribution,
+                        }
+                        for rl in sc_obj.rules
+                    ]
+                    recompute_svc(
+                        scenario_id=scenario_id_input, rules=rule_dicts,
+                        model_id=scenario.model_id, data_dir=app_settings.data_dir,
+                        dataset_ids=ds_ids,
+                    )
+                except Exception as exc:
+                    logger.warning("Recompute after add_scenario_rule failed: %s", exc)
+
+                return {
+                    "rules_added": True,
+                    "scenario_id": scenario_id_input,
+                    "rules_count": len(rules_input),
+                }, "scenario_rules"
+        except Exception as exc:
+            logger.exception("Failed to add scenario rules: %s", exc)
+            return {"error": f"Failed to add rules: {exc}"}, None
 
     elif tool_name == "list_scenarios":
-        return {"scenarios": [], "note": "Scenario listing requires DB session"}, None
+        from app.database import AsyncSessionLocal
+        from app.models.metadata import Scenario
+        from sqlalchemy import select as sa_select
+        from sqlalchemy.orm import selectinload
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    sa_select(Scenario)
+                    .where(Scenario.model_id == model_id)
+                    .options(selectinload(Scenario.rules))
+                    .order_by(Scenario.created_at.desc())
+                )
+                scenarios = result.scalars().all()
+                return {
+                    "scenarios": [
+                        {
+                            "id": s.id,
+                            "name": s.name,
+                            "rules_count": len(s.rules) if s.rules else 0,
+                            "base_config": s.base_config,
+                            "color": s.color,
+                        }
+                        for s in scenarios
+                    ],
+                    "count": len(scenarios),
+                }, None
+        except Exception as exc:
+            logger.exception("Failed to list scenarios: %s", exc)
+            return {"error": f"Failed to list scenarios: {exc}"}, None
 
     elif tool_name == "compare_scenarios":
         from app.services.scenario_engine import compute_variance

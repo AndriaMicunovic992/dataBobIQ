@@ -110,7 +110,7 @@ def unregister_dataset(dataset_id: str) -> None:
         logger.warning("Failed to drop view %s", quoted, exc_info=True)
 
 
-def execute_query(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def execute_query(sql: str, params: list[Any] | dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Execute a read-only SQL query and return results as a list of dicts.
 
     Parameters

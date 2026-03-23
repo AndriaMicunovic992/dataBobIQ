@@ -390,10 +390,24 @@ function ScenarioDetail({ scenarioId, modelId }) {
   const rules = scenario?.rules || [];
   const hasRules = rules.length > 0;
 
+  // Resolve fact dataset (owns the measures) and build join_dimensions
+  // when the breakdown field lives in a different (lookup) dataset.
   const waterfallParams = useMemo(() => {
     if (!effectiveBreakdown || !effectiveMeasure) return null;
-    return { breakdown_field: effectiveBreakdown, value_field: effectiveMeasure };
-  }, [effectiveBreakdown, effectiveMeasure]);
+    const fieldMap = metadata?.fieldDatasetMap || {};
+
+    // The fact dataset is the one that owns the selected measure
+    const factDatasetId = fieldMap[effectiveMeasure] || metadata?.datasets?.[0]?.id;
+    const breakdownDatasetId = fieldMap[effectiveBreakdown];
+
+    const params = { breakdown_field: effectiveBreakdown, value_field: effectiveMeasure };
+
+    // If the breakdown dimension lives in a different dataset, pass join_dimensions
+    if (breakdownDatasetId && factDatasetId && breakdownDatasetId !== factDatasetId) {
+      params.join_dimensions = JSON.stringify({ [effectiveBreakdown]: breakdownDatasetId });
+    }
+    return params;
+  }, [effectiveBreakdown, effectiveMeasure, metadata]);
 
   const { data: waterfall } = useWaterfall(
     hasRules ? scenarioId : null,

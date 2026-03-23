@@ -485,15 +485,19 @@ def build_scenario_merge_sql(
 
     where_sql = f"WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
 
-    group_cols = ", ".join(_qualify(g) for g in group_by)
-    # For CTE selects, we need unqualified output aliases
-    group_aliases = ", ".join(_quote(g) for g in group_by)
+    # SELECT: qualified references aliased to plain column names
     select_group = ", ".join(
         f"{_qualify(g)} AS {_quote(g)}" for g in group_by
     )
     select_group_sql = f"{select_group}, " if select_group else ""
 
-    group_by_sql = f"GROUP BY {group_cols}" if group_cols else ""
+    # GROUP BY: use positional references (1, 2, ...) to avoid DuckDB's
+    # "aliases cannot be used in GROUP BY" error when qualified expressions
+    # produce aliases that collide with the original column name.
+    group_by_sql = (
+        f"GROUP BY {', '.join(str(i + 1) for i in range(len(group_by)))}"
+        if group_by else ""
+    )
 
     # FROM clause for fact tables (with optional JOINs)
     actuals_from = f"{base_view} AS f {join_sql}" if use_aliases else base_view

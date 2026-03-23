@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -51,7 +52,8 @@ async def run_pivot(
                 relationships.append(rel)
 
     try:
-        response = execute_pivot(
+        response = await asyncio.to_thread(
+            execute_pivot,
             request=body,
             dataset_id=body.dataset_id,
             scenario_ids=body.scenario_ids or None,

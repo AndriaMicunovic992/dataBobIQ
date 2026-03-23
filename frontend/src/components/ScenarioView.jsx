@@ -33,7 +33,7 @@ function CreateScenarioForm({ modelId, onClose }) {
 
   const handleSubmit = () => {
     if (!name.trim()) return;
-    mut.mutate({ name: name.trim(), description: description.trim(), base_layer: baseLayer }, {
+    mut.mutate({ name: name.trim(), description: description.trim(), base_config: { source: baseLayer } }, {
       onSuccess: onClose,
     });
   };
@@ -410,7 +410,7 @@ function ScenarioDetail({ scenarioId, modelId }) {
         <h3 style={{ margin: 0, fontSize: typography.fontSizes.xl, fontWeight: typography.fontWeights.bold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
           {scenario.name}
         </h3>
-        <Badge variant="info">{scenario.base_layer || 'actuals'}</Badge>
+        <Badge variant="info">{scenario.base_config?.source || 'actuals'}</Badge>
         <div style={{ flex: 1 }} />
         <Button variant="secondary" size="sm" loading={recomputeMut.isPending} onClick={() => recomputeMut.mutate()}>
           ↻ Recompute
@@ -629,7 +629,7 @@ function ScenarioListItem({ scenario, selected, onClick, onDelete }) {
           {scenario.name}
         </div>
         <div style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily }}>
-          {(scenario.rules || []).length} rules · {scenario.base_layer || 'actuals'}
+          {(scenario.rules || []).length} rules · {scenario.base_config?.source || 'actuals'}
         </div>
       </div>
       {(hovered || selected) && (

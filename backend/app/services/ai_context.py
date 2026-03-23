@@ -103,8 +103,11 @@ async def build_ai_context(
                     vals = [str(r["v"]) for r in rows]
                     if vals:
                         top_vals = ", ".join(vals)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch dimension values for %s.%s: %s",
+                        ds.name, display_name, exc,
+                    )
                 if top_vals:
                     attrs += f' top_values="{_xml_escape(top_vals)}"'
                 parts.append(f"      <dim {attrs}/>")
@@ -130,8 +133,11 @@ async def build_ai_context(
                             f'min={_format_number(r.get("mn"))}, '
                             f'max={_format_number(r.get("mx"))}'
                         )
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to fetch measure stats for %s.%s: %s",
+                        ds.name, display_name, exc,
+                    )
                 attrs = f'name="{_xml_escape(display_name)}" type="{meas.data_type}"'
                 if stats:
                     attrs += f' stats="{stats}"'

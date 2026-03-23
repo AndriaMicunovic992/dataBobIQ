@@ -57,15 +57,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 )
             )
             datasets = result.scalars().all()
+            registered_count = 0
             for ds in datasets:
+                if not ds.parquet_path or not Path(ds.parquet_path).exists():
+                    logger.warning(
+                        "Skipping dataset %s (%s): parquet file not found at %s",
+                        ds.id, ds.name, ds.parquet_path,
+                    )
+                    continue
                 try:
                     register_dataset(ds.id, ds.parquet_path)
+                    registered_count += 1
                 except Exception as exc:
                     logger.warning(
                         "Failed to re-register dataset %s (%s): %s",
                         ds.id, ds.parquet_path, exc,
                     )
-            logger.info("Re-registered %d active dataset views in DuckDB", len(datasets))
+            logger.info(
+                "Re-registered %d/%d active dataset views in DuckDB",
+                registered_count, len(datasets),
+            )
 
             # Re-register scenario views (parquet paths are deterministic)
             sc_result = await db.execute(select(Scenario))
@@ -101,7 +112,7 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

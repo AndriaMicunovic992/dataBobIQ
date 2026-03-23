@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 from functools import cached_property
+from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -24,12 +26,17 @@ class Settings(BaseSettings):
     anthropic_api_key_chat: str = ""
     anthropic_api_key_agent: str = ""
 
-    # Storage
+    # Storage (raw values from env/config)
     upload_dir: str = "./uploads"
     data_dir: str = "./data"
 
     # CORS
     cors_origins: str = "http://localhost:5173"
+
+    def model_post_init(self, __context: Any) -> None:
+        """Resolve relative storage paths to absolute to avoid CWD-dependent behavior."""
+        object.__setattr__(self, "upload_dir", str(Path(self.upload_dir).resolve()))
+        object.__setattr__(self, "data_dir", str(Path(self.data_dir).resolve()))
 
     # ------------------------------------------------------------------ #
     # Derived URLs                                                         #

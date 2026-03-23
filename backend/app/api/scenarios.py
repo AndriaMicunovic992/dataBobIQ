@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -73,7 +74,8 @@ async def _recompute_from_db(scenario: Scenario, db: AsyncSession) -> int:
         for r in scenario.rules
     ]
     dataset_ids = await _get_model_dataset_ids(scenario.model_id, db)
-    return recompute_scenario_svc(
+    return await asyncio.to_thread(
+        recompute_scenario_svc,
         scenario_id=scenario.id,
         rules=rules,
         model_id=scenario.model_id,
@@ -321,13 +323,15 @@ async def get_variance(
 
     for attempt in range(2):
         try:
-            result = compute_variance(
+            result = await asyncio.to_thread(
+                compute_variance,
                 dataset_id=dataset_id,
                 scenario_id=scenario_id,
                 group_by=group_by_list,
                 value_field=value_field,
                 filters=parsed_filters if parsed_filters else None,
                 model_id=scenario.model_id,
+                data_dir=settings.data_dir,
             )
             return result
         except (ValueError, Exception) as exc:
@@ -368,13 +372,15 @@ async def get_waterfall(
 
     for attempt in range(2):
         try:
-            rows = execute_waterfall(
+            rows = await asyncio.to_thread(
+                execute_waterfall,
                 dataset_id=dataset_id,
                 scenario_id=scenario_id,
                 breakdown_field=breakdown_field,
                 value_field=value_field,
                 filters=parsed_filters if parsed_filters else None,
                 model_id=scenario.model_id,
+                data_dir=settings.data_dir,
             )
             break
         except (ValueError, Exception) as exc:

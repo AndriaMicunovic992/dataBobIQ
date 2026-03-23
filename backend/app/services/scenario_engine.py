@@ -455,8 +455,9 @@ def build_scenario_merge_sql(
     return sql, params
 
 
-def _ensure_scenario_view(scenario_id: str, model_id: str) -> None:
+def _ensure_scenario_view(scenario_id: str, model_id: str, data_dir: str = "") -> None:
     """Make sure the DuckDB view for a scenario exists, re-registering from parquet if needed."""
+    resolved_dir = data_dir or settings.data_dir
     view_key = f"sc_{scenario_id}"
     view_name = view_name_for(view_key)
     conn = get_duckdb_conn()
@@ -464,7 +465,7 @@ def _ensure_scenario_view(scenario_id: str, model_id: str) -> None:
         conn.execute(f"SELECT 1 FROM {view_name} LIMIT 0")
     except Exception:
         # View doesn't exist — try to register from parquet file on disk
-        scenario_path = get_scenario_path(settings.data_dir, model_id, scenario_id)
+        scenario_path = get_scenario_path(resolved_dir, model_id, scenario_id)
         import os
         if os.path.exists(scenario_path):
             register_dataset(view_key, scenario_path)
@@ -472,6 +473,7 @@ def _ensure_scenario_view(scenario_id: str, model_id: str) -> None:
         else:
             raise ValueError(
                 f"Scenario {scenario_id} has no computed data. "
+                f"Looked in {scenario_path}. "
                 f"Please recompute the scenario first."
             )
 
@@ -490,7 +492,7 @@ def compute_variance(
     Returns a dict with groups, totals, and delta information.
     """
     # Ensure scenario view is registered (may have been lost on server restart)
-    _ensure_scenario_view(scenario_id, model_id)
+    _ensure_scenario_view(scenario_id, model_id, data_dir=data_dir)
 
     sql, params = build_scenario_merge_sql(
         dataset_id, [scenario_id], group_by, value_field, filters
@@ -542,10 +544,11 @@ def execute_waterfall(
     value_field: str = "amount",
     filters: dict | None = None,
     model_id: str = "",
+    data_dir: str = "",
 ) -> list[dict]:
     """Execute a waterfall/bridge chart query comparing actuals to scenario.
 
-    Returns a list of steps: {name, actual, scenario, delta, running_total, is_total}.
+    Returns a list of steps: {label, value, type, running_total, delta_pct}.
     """
     variance = compute_variance(
         dataset_id=dataset_id,
@@ -554,6 +557,7 @@ def execute_waterfall(
         value_field=value_field,
         filters=filters,
         model_id=model_id,
+        data_dir=data_dir,
     )
 
     groups = variance["groups"]
@@ -562,9 +566,11 @@ def execute_waterfall(
 
     # Opening bar: actuals total
     steps.append({
+        "label": "Actuals",
         "name": "Actuals",
         "value": variance["total_actual"],
         "running_total": variance["total_actual"],
+        "type": "start",
         "is_total": True,
         "delta_pct": None,
     })
@@ -574,18 +580,22 @@ def execute_waterfall(
         delta = g["delta"]
         running += delta
         steps.append({
+            "label": str(g["group"].get(breakdown_field, "")),
             "name": str(g["group"].get(breakdown_field, "")),
             "value": delta,
             "running_total": variance["total_actual"] + running,
+            "type": "delta",
             "is_total": False,
             "delta_pct": g["delta_pct"],
         })
 
     # Closing bar: scenario total
     steps.append({
+        "label": "Scenario",
         "name": "Scenario",
         "value": variance["total_scenario"],
         "running_total": variance["total_scenario"],
+        "type": "end",
         "is_total": True,
         "delta_pct": variance["total_delta_pct"],
     })

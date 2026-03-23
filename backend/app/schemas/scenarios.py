@@ -86,8 +86,10 @@ class VarianceResponse(BaseModel):
 
 
 class WaterfallStep(BaseModel):
+    label: str
     name: str
     value: float
     running_total: float
+    type: str  # start|delta|end
     is_total: bool
     delta_pct: float | None = None

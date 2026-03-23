@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import Any
 
@@ -29,20 +30,29 @@ def get_duckdb_conn() -> duckdb.DuckDBPyConnection:
         _local.conn = duckdb.connect(database=":memory:", read_only=False)
         _local.registered = set()
     # Ensure all known datasets are registered in this thread's connection
+    # Take a snapshot of missing datasets under the lock to avoid race conditions
     with _registry_lock:
         missing = set(_registered_datasets.keys()) - getattr(_local, "registered", set())
-    for ds_id in missing:
-        path = _registered_datasets.get(ds_id)
-        if path:
-            quoted = view_name_for(ds_id)
-            try:
-                _local.conn.execute(
-                    f"CREATE OR REPLACE VIEW {quoted} AS "
-                    f"SELECT * FROM read_parquet('{path}')"
-                )
-                _local.registered.add(ds_id)
-            except Exception:
-                logger.warning("Failed to auto-register view %s on thread %s", quoted, threading.current_thread().name)
+        missing_items = {ds_id: _registered_datasets[ds_id] for ds_id in missing}
+    for ds_id, path in missing_items.items():
+        if not os.path.exists(path):
+            logger.warning(
+                "Parquet file missing for dataset %s: %s (thread=%s)",
+                ds_id, path, threading.current_thread().name,
+            )
+            continue
+        quoted = view_name_for(ds_id)
+        try:
+            _local.conn.execute(
+                f"CREATE OR REPLACE VIEW {quoted} AS "
+                f"SELECT * FROM read_parquet('{path}')"
+            )
+            _local.registered.add(ds_id)
+        except Exception:
+            logger.warning(
+                "Failed to auto-register view %s from %s on thread %s",
+                quoted, path, threading.current_thread().name, exc_info=True,
+            )
     return _local.conn
 
 
@@ -62,6 +72,12 @@ def register_dataset(dataset_id: str, parquet_path: str) -> None:
     the dataset by its stable view name without re-specifying the file path.
     Also records the mapping globally so new threads auto-register the view.
     """
+    if not os.path.exists(parquet_path):
+        raise FileNotFoundError(
+            f"Cannot register dataset {dataset_id}: "
+            f"parquet file not found at {parquet_path}"
+        )
+
     with _registry_lock:
         _registered_datasets[dataset_id] = parquet_path
 
@@ -94,7 +110,7 @@ def unregister_dataset(dataset_id: str) -> None:
         logger.warning("Failed to drop view %s", quoted, exc_info=True)
 
 
-def execute_query(sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def execute_query(sql: str, params: list[Any] | dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Execute a read-only SQL query and return results as a list of dicts.
 
     Parameters

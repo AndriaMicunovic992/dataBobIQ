@@ -112,7 +112,7 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list or ["*"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -147,6 +147,7 @@ _optional_routers: list[tuple[str, str]] = [
     ("app.api.kpis", "kpis"),
     ("app.api.chat", "chat"),
     ("app.api.knowledge", "knowledge"),
+    ("app.api.dashboard", "dashboard"),
 ]
 
 for _module_path, _tag in _optional_routers:

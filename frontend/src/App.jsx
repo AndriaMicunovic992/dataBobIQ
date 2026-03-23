@@ -9,12 +9,14 @@ import UploadModal from './components/UploadModal.jsx';
 import SchemaView from './components/SchemaView.jsx';
 import PivotView from './components/PivotView.jsx';
 import ScenarioView from './components/ScenarioView.jsx';
+import DashboardView from './components/DashboardView.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
 import KnowledgePanel from './components/KnowledgePanel.jsx';
 
 const TABS = [
   { id: 'schema', label: 'Data Model', icon: '⬡' },
   { id: 'actuals', label: 'Actuals', icon: '◈' },
+  { id: 'dashboard', label: 'Dashboard', icon: '▦' },
   { id: 'scenarios', label: 'Scenarios', icon: '◑' },
   { id: 'knowledge', label: 'Knowledge', icon: '◇' },
 ];
@@ -350,6 +352,8 @@ export default function App() {
         return <SchemaView modelId={selectedModelId} datasets={datasets} onUpload={() => setShowUploadModal(true)} />;
       case 'actuals':
         return <PivotView modelId={selectedModelId} />;
+      case 'dashboard':
+        return <DashboardView modelId={selectedModelId} />;
       case 'scenarios':
         return <ScenarioView modelId={selectedModelId} />;
       case 'knowledge':

@@ -147,6 +147,7 @@ _optional_routers: list[tuple[str, str]] = [
     ("app.api.kpis", "kpis"),
     ("app.api.chat", "chat"),
     ("app.api.knowledge", "knowledge"),
+    ("app.api.dashboard", "dashboard"),
 ]
 
 for _module_path, _tag in _optional_routers:

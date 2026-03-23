@@ -1,0 +1,97 @@
+import { useMemo } from 'react';
+import { usePivot } from '../hooks/usePivot.js';
+import { colors, spacing, radius, typography } from '../theme.js';
+
+function formatBigNum(val) {
+  if (val === null || val === undefined) return '—';
+  const abs = Math.abs(val);
+  if (abs >= 1_000_000_000) return `${(val / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `${(val / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(val / 1_000).toFixed(1)}K`;
+  return Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
+}
+
+export default function DashboardCard({ widget, scenarioId }) {
+  const config = widget.config || {};
+
+  const apiConfig = useMemo(() => {
+    if (!config.dataset_id || !config.measures?.length) return null;
+    return {
+      model_id: config.model_id,
+      dataset_id: config.dataset_id,
+      row_dimensions: [],
+      column_dimension: null,
+      measures: config.measures,
+      filters: config.filters || {},
+      scenario_ids: scenarioId ? [scenarioId] : [],
+      join_dimensions: config.join_dimensions || undefined,
+      limit: 1,
+    };
+  }, [config, scenarioId]);
+
+  const { data, isLoading } = usePivot(apiConfig);
+
+  const value = useMemo(() => {
+    if (!data?.rows?.length) return null;
+    const row = data.rows[0];
+    // First numeric value
+    const measureIdx = data.columns?.findIndex((c) => c.type === 'measure');
+    return measureIdx >= 0 ? row[measureIdx] : row[0];
+  }, [data]);
+
+  // If scenario is active, try to find variance column
+  const scenarioValue = useMemo(() => {
+    if (!scenarioId || !data?.rows?.length || !data.columns) return null;
+    const row = data.rows[0];
+    const varIdx = data.columns.findIndex((c) => c.type === 'variance');
+    const scIdx = data.columns.findIndex((c) => c.type === 'scenario');
+    if (scIdx >= 0) return { scenario: row[scIdx], variance: varIdx >= 0 ? row[varIdx] : null };
+    return null;
+  }, [data, scenarioId]);
+
+  const measureLabel = config.measures?.[0]?.label || config.measures?.[0]?.field || widget.name;
+
+  return (
+    <div style={{
+      background: colors.bgCard, borderRadius: radius.lg,
+      border: `1px solid ${colors.border}`, padding: spacing.lg,
+      display: 'flex', flexDirection: 'column', justifyContent: 'center',
+      height: '100%', minHeight: 120,
+    }}>
+      <div style={{
+        fontSize: typography.fontSizes.xs, color: colors.textMuted,
+        fontFamily: typography.fontFamily, textTransform: 'uppercase',
+        letterSpacing: '0.05em', marginBottom: spacing.xs,
+      }}>
+        {measureLabel}
+      </div>
+      {isLoading ? (
+        <div style={{ fontSize: typography.fontSizes.lg, color: colors.textMuted, fontFamily: 'monospace' }}>...</div>
+      ) : (
+        <>
+          <div style={{
+            fontSize: 28, fontWeight: typography.fontWeights.bold,
+            color: colors.textPrimary, fontFamily: 'monospace', lineHeight: 1.2,
+          }}>
+            {formatBigNum(value)}
+          </div>
+          {scenarioValue && (
+            <div style={{ display: 'flex', gap: spacing.sm, marginTop: spacing.xs, alignItems: 'baseline' }}>
+              <span style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: 'monospace' }}>
+                Scenario: {formatBigNum(scenarioValue.scenario)}
+              </span>
+              {scenarioValue.variance != null && (
+                <span style={{
+                  fontSize: typography.fontSizes.xs, fontFamily: 'monospace',
+                  color: scenarioValue.variance > 0 ? colors.success : scenarioValue.variance < 0 ? colors.danger : colors.textMuted,
+                }}>
+                  {scenarioValue.variance > 0 ? '+' : ''}{formatBigNum(scenarioValue.variance)}
+                </span>
+              )}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

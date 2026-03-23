@@ -356,3 +356,27 @@ class DatasetRelationship(Base):
         back_populates="dataset_relationships",
         foreign_keys=[model_id],
     )
+
+
+class DashboardWidget(Base):
+    """A saved visual (table or card) placed on a model's dashboard grid."""
+
+    __tablename__ = "dashboard_widgets"
+    __allow_unmapped__ = True
+
+    id: str = Column(String, primary_key=True, default=_new_uuid)
+    model_id: str = Column(
+        String, ForeignKey("models.id", ondelete="CASCADE"), nullable=False
+    )
+    name: str = Column(String(255), nullable=False)
+    widget_type: str = Column(String(50), nullable=False, default="table")  # table|card
+    config: dict[str, Any] = Column(JSONB, nullable=False, default=dict)
+    position: dict[str, Any] = Column(JSONB, nullable=False, default=dict)  # {x, y, w, h}
+    created_at: datetime = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: datetime | None = Column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
+    )
+
+    model = relationship("Model")

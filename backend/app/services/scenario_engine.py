@@ -374,14 +374,81 @@ def recompute_scenario(
     return total_affected
 
 
+def _build_variance_join_clauses(
+    dataset_id: str,
+    join_dimensions: dict[str, str] | None,
+    relationships: list | None,
+) -> tuple[str, dict[str, str]]:
+    """Build LEFT JOIN clauses for cross-dataset dimensions in variance/waterfall queries.
+
+    Replicates the logic from pivot_engine._build_join_clauses so that variance
+    and waterfall queries can group by columns from lookup/dimension tables.
+
+    Returns (join_sql, alias_map) where alias_map maps dim_field → table alias.
+    The caller should alias the fact table as 'f' when join_sql is non-empty.
+    """
+    if not join_dimensions or not relationships:
+        return "", {}
+
+    join_parts: list[str] = []
+    alias_map: dict[str, str] = {}
+    joined_datasets: dict[str, str] = {}
+
+    for dim_field, dim_ds_id in join_dimensions.items():
+        if dim_ds_id in joined_datasets:
+            alias_map[dim_field] = joined_datasets[dim_ds_id]
+            continue
+
+        rel = None
+        for r in relationships:
+            if r.source_dataset_id == dataset_id and r.target_dataset_id == dim_ds_id:
+                rel = r
+                break
+            if r.target_dataset_id == dataset_id and r.source_dataset_id == dim_ds_id:
+                rel = r
+                break
+
+        if not rel:
+            logger.warning(
+                "No relationship found for dimension '%s' (dataset %s → %s), skipping join",
+                dim_field, dataset_id, dim_ds_id,
+            )
+            continue
+
+        alias = f"j{len(joined_datasets)}"
+        joined_datasets[dim_ds_id] = alias
+        alias_map[dim_field] = alias
+
+        target_view = view_name_for(dim_ds_id)
+
+        if rel.source_dataset_id == dataset_id:
+            fact_col = _quote(rel.source_column)
+            lookup_col = _quote(rel.target_column)
+        else:
+            fact_col = _quote(rel.target_column)
+            lookup_col = _quote(rel.source_column)
+
+        join_parts.append(
+            f"LEFT JOIN {target_view} AS {alias} ON f.{fact_col} = {alias}.{lookup_col}"
+        )
+
+    return " ".join(join_parts), alias_map
+
+
 def build_scenario_merge_sql(
     dataset_id: str,
     scenario_ids: list[str],
     group_by: list[str],
     value_field: str = "amount",
     filters: dict | None = None,
+    join_dimensions: dict[str, str] | None = None,
+    relationships: list | None = None,
 ) -> tuple[str, list[Any]]:
     """Build a COALESCE-based merge SQL that overlays scenario values on actuals.
+
+    Supports cross-dataset JOINs: when ``join_dimensions`` maps a group_by field
+    to a different dataset_id, the query JOINs to that lookup table so the column
+    is accessible for grouping.
 
     Returns (sql, params).
     """
@@ -389,10 +456,25 @@ def build_scenario_merge_sql(
     base_view = view_name_for(dataset_id)
     val_col = _quote(value_field)
 
+    # Build JOINs for cross-dataset dimensions
+    join_sql, alias_map = _build_variance_join_clauses(
+        dataset_id, join_dimensions, relationships,
+    )
+    use_aliases = bool(alias_map)
+
+    # Build qualified column references for GROUP BY
+    def _qualify(col: str, fact_alias: str = "f") -> str:
+        if col in alias_map:
+            return f'{alias_map[col]}.{_quote(col)}'
+        if use_aliases:
+            return f'{fact_alias}.{_quote(col)}'
+        return _quote(col)
+
+    # Build filter clause with alias awareness
     filter_parts: list[str] = []
     if filters:
         for field, spec in filters.items():
-            col = _quote(field)
+            col = _qualify(field)
             if isinstance(spec, list):
                 placeholders = ", ".join("?" * len(spec))
                 filter_parts.append(f"{col} IN ({placeholders})")
@@ -403,33 +485,51 @@ def build_scenario_merge_sql(
 
     where_sql = f"WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
 
-    group_cols = ", ".join(_quote(g) for g in group_by)
-    select_group = f"{group_cols}, " if group_cols else ""
+    group_cols = ", ".join(_qualify(g) for g in group_by)
+    # For CTE selects, we need unqualified output aliases
+    group_aliases = ", ".join(_quote(g) for g in group_by)
+    select_group = ", ".join(
+        f"{_qualify(g)} AS {_quote(g)}" for g in group_by
+    )
+    select_group_sql = f"{select_group}, " if select_group else ""
+
+    group_by_sql = f"GROUP BY {group_cols}" if group_cols else ""
+
+    # FROM clause for fact tables (with optional JOINs)
+    actuals_from = f"{base_view} AS f {join_sql}" if use_aliases else base_view
 
     # Build CTE per scenario view
     cte_parts: list[str] = []
-    scenario_selects: list[str] = []
 
     # Base actuals CTE
     actuals_cte = (
         f"actuals AS ("
-        f"SELECT {select_group}SUM({val_col}) AS actual_{value_field} "
-        f"FROM {base_view} {where_sql} "
-        f"{'GROUP BY ' + group_cols if group_cols else ''})"
+        f"SELECT {select_group_sql}SUM({_qualify(value_field)}) AS actual_{value_field} "
+        f"FROM {actuals_from} {where_sql} "
+        f"{group_by_sql})"
     )
     cte_parts.append(actuals_cte)
 
+    # Scenario CTEs — the scenario parquet already has the full dataset
+    # (with rules applied), so it needs the same JOINs as actuals
+    base_filter_param_count = len(params)
     for sc_id in scenario_ids:
-        sc_view = view_name_for(f"sc_{sc_id}")  # -> "ds_sc_{uuid}" (quoted)
-        sc_alias = f"sc_{sc_id.replace('-', '_')}"
+        sc_view = view_name_for(f"sc_{sc_id}")
+        sc_alias_name = f"sc_{sc_id.replace('-', '_')}"
+
+        # Build scenario-specific JOIN sql (same lookup tables, different fact view)
+        sc_join_sql = join_sql  # Same joins, just on a different fact view
+        sc_from = f"{sc_view} AS f {sc_join_sql}" if use_aliases else sc_view
+
         sc_cte = (
-            f"{sc_alias} AS ("
-            f"SELECT {select_group}SUM({val_col}) AS scenario_{value_field} "
-            f"FROM {sc_view} {where_sql} "
-            f"{'GROUP BY ' + group_cols if group_cols else ''})"
+            f"{sc_alias_name} AS ("
+            f"SELECT {select_group_sql}SUM({_qualify(value_field)}) AS scenario_{value_field} "
+            f"FROM {sc_from} {where_sql} "
+            f"{group_by_sql})"
         )
         cte_parts.append(sc_cte)
-        params.extend(params[: len(params) // (len(scenario_ids) + 1)])  # duplicate filter params
+        # Duplicate filter params for this CTE's WHERE clause
+        params.extend(params[:base_filter_param_count])
 
     # Final SELECT with COALESCE
     if scenario_ids:
@@ -437,9 +537,11 @@ def build_scenario_merge_sql(
         coalesce_expr = f"COALESCE({first_sc}.scenario_{value_field}, actuals.actual_{value_field})"
         join_clauses = ""
         for sc_id in scenario_ids:
-            sc_alias = f"sc_{sc_id.replace('-', '_')}"
-            on_clause = " AND ".join(f"actuals.{_quote(g)} = {sc_alias}.{_quote(g)}" for g in group_by) if group_by else "TRUE"
-            join_clauses += f" LEFT JOIN {sc_alias} ON {on_clause}"
+            sc_alias_name = f"sc_{sc_id.replace('-', '_')}"
+            on_clause = " AND ".join(
+                f'actuals.{_quote(g)} = {sc_alias_name}.{_quote(g)}' for g in group_by
+            ) if group_by else "TRUE"
+            join_clauses += f" LEFT JOIN {sc_alias_name} ON {on_clause}"
 
         select_cols = f"{', '.join('actuals.' + _quote(g) for g in group_by)}, " if group_by else ""
         sql = (
@@ -486,16 +588,21 @@ def compute_variance(
     filters: dict | None = None,
     model_id: str = "",
     data_dir: str = "",
+    join_dimensions: dict[str, str] | None = None,
+    relationships: list | None = None,
 ) -> dict:
     """Compute actual vs scenario variance.
 
     Returns a dict with groups, totals, and delta information.
+    Supports cross-dataset JOINs via join_dimensions and relationships.
     """
     # Ensure scenario view is registered (may have been lost on server restart)
     _ensure_scenario_view(scenario_id, model_id, data_dir=data_dir)
 
     sql, params = build_scenario_merge_sql(
-        dataset_id, [scenario_id], group_by, value_field, filters
+        dataset_id, [scenario_id], group_by, value_field, filters,
+        join_dimensions=join_dimensions,
+        relationships=relationships,
     )
 
     rows = execute_query(sql, params if params else None)
@@ -545,10 +652,13 @@ def execute_waterfall(
     filters: dict | None = None,
     model_id: str = "",
     data_dir: str = "",
+    join_dimensions: dict[str, str] | None = None,
+    relationships: list | None = None,
 ) -> list[dict]:
     """Execute a waterfall/bridge chart query comparing actuals to scenario.
 
     Returns a list of steps: {label, value, type, running_total, delta_pct}.
+    Supports cross-dataset JOINs via join_dimensions and relationships.
     """
     variance = compute_variance(
         dataset_id=dataset_id,
@@ -558,6 +668,8 @@ def execute_waterfall(
         filters=filters,
         model_id=model_id,
         data_dir=data_dir,
+        join_dimensions=join_dimensions,
+        relationships=relationships,
     )
 
     groups = variance["groups"]

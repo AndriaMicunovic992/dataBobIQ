@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db
-from app.models.metadata import Dataset, Model, Scenario, ScenarioRule
+from app.models.metadata import Dataset, DatasetRelationship, Model, Scenario, ScenarioRule
 from app.schemas.scenarios import (
     ScenarioCreate,
     ScenarioResponse,
@@ -298,17 +298,27 @@ async def recompute_scenario(
     return {"status": "ok", "scenario_id": scenario_id, "affected_rows": affected}
 
 
+async def _get_model_relationships(model_id: str, db: AsyncSession) -> list:
+    """Fetch all dataset relationships for a model."""
+    result = await db.execute(
+        select(DatasetRelationship).where(DatasetRelationship.model_id == model_id)
+    )
+    return list(result.scalars().all())
+
+
 @router.get("/scenarios/{scenario_id}/variance")
 async def get_variance(
     scenario_id: str,
     group_by: str = Query(..., description="Comma-separated dimension columns to group by"),
     value_field: str = Query(..., description="Measure column to aggregate"),
     filters: str | None = Query(None, description="JSON-encoded filter dict"),
+    join_dimensions: str | None = Query(None, description="JSON-encoded {field: dataset_id} map for cross-dataset dims"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Compute actuals-vs-scenario variance for given dimensions.
 
     Returns rows with base_value, scenario_value, and absolute/relative variance.
+    Supports cross-dataset dimensions via join_dimensions parameter.
     """
     group_by_list = [col.strip() for col in group_by.split(",") if col.strip()]
     parsed_filters: dict[str, Any] = {}
@@ -318,8 +328,20 @@ async def get_variance(
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=422, detail=f"Invalid filters JSON: {exc}") from exc
 
+    parsed_join_dims: dict[str, str] | None = None
+    if join_dimensions:
+        try:
+            parsed_join_dims = json.loads(join_dimensions)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid join_dimensions JSON: {exc}") from exc
+
     scenario = await _get_scenario_or_404(scenario_id, db)
     dataset_id = await _resolve_scenario_dataset_id(scenario, db)
+
+    # Fetch relationships if cross-dataset JOINs are needed
+    relationships = None
+    if parsed_join_dims:
+        relationships = await _get_model_relationships(scenario.model_id, db)
 
     for attempt in range(2):
         try:
@@ -332,6 +354,8 @@ async def get_variance(
                 filters=parsed_filters if parsed_filters else None,
                 model_id=scenario.model_id,
                 data_dir=settings.data_dir,
+                join_dimensions=parsed_join_dims,
+                relationships=relationships,
             )
             return result
         except (ValueError, Exception) as exc:
@@ -354,11 +378,13 @@ async def get_waterfall(
     breakdown_field: str = Query(..., description="Dimension column to break down by"),
     value_field: str = Query(..., description="Measure column to aggregate"),
     filters: str | None = Query(None, description="JSON-encoded filter dict"),
+    join_dimensions: str | None = Query(None, description="JSON-encoded {field: dataset_id} map for cross-dataset dims"),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Compute waterfall/bridge data showing contribution of each breakdown segment.
 
     Returns ordered rows suitable for rendering a waterfall chart.
+    Supports cross-dataset dimensions via join_dimensions parameter.
     """
     parsed_filters: dict[str, Any] = {}
     if filters:
@@ -367,8 +393,20 @@ async def get_waterfall(
         except json.JSONDecodeError as exc:
             raise HTTPException(status_code=422, detail=f"Invalid filters JSON: {exc}") from exc
 
+    parsed_join_dims: dict[str, str] | None = None
+    if join_dimensions:
+        try:
+            parsed_join_dims = json.loads(join_dimensions)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid join_dimensions JSON: {exc}") from exc
+
     scenario = await _get_scenario_or_404(scenario_id, db)
     dataset_id = await _resolve_scenario_dataset_id(scenario, db)
+
+    # Fetch relationships if cross-dataset JOINs are needed
+    relationships = None
+    if parsed_join_dims:
+        relationships = await _get_model_relationships(scenario.model_id, db)
 
     for attempt in range(2):
         try:
@@ -381,6 +419,8 @@ async def get_waterfall(
                 filters=parsed_filters if parsed_filters else None,
                 model_id=scenario.model_id,
                 data_dir=settings.data_dir,
+                join_dimensions=parsed_join_dims,
+                relationships=relationships,
             )
             break
         except (ValueError, Exception) as exc:

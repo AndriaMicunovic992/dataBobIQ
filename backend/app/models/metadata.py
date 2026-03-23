@@ -358,10 +358,9 @@ class DatasetRelationship(Base):
     )
 
 
-class DashboardWidget(Base):
-    """A saved visual (table or card) placed on a model's dashboard grid."""
-
-    __tablename__ = "dashboard_widgets"
+class Dashboard(Base):
+    """A named dashboard containing widgets, belonging to a model."""
+    __tablename__ = "dashboards"
     __allow_unmapped__ = True
 
     id: str = Column(String, primary_key=True, default=_new_uuid)
@@ -369,9 +368,7 @@ class DashboardWidget(Base):
         String, ForeignKey("models.id", ondelete="CASCADE"), nullable=False
     )
     name: str = Column(String(255), nullable=False)
-    widget_type: str = Column(String(50), nullable=False, default="table")  # table|card
-    config: dict[str, Any] = Column(JSONB, nullable=False, default=dict)
-    position: dict[str, Any] = Column(JSONB, nullable=False, default=dict)  # {x, y, w, h}
+    description: str | None = Column(Text, nullable=True)
     created_at: datetime = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -380,3 +377,35 @@ class DashboardWidget(Base):
     )
 
     model = relationship("Model")
+    widgets = relationship(
+        "DashboardWidget", back_populates="dashboard",
+        cascade="all, delete-orphan", uselist=True
+    )
+
+
+class DashboardWidget(Base):
+    """A saved visual (table or card) placed on a model's dashboard grid."""
+
+    __tablename__ = "dashboard_widgets"
+    __allow_unmapped__ = True
+
+    id: str = Column(String, primary_key=True, default=_new_uuid)
+    dashboard_id: str = Column(
+        String, ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False
+    )
+    model_id: str = Column(
+        String, ForeignKey("models.id", ondelete="CASCADE"), nullable=False
+    )
+    name: str = Column(String(255), nullable=False)
+    widget_type: str = Column(String(50), nullable=False, default="table")  # table|card
+    config: dict[str, Any] = Column(JSONB, nullable=False, default=dict)
+    position: dict[str, Any] = Column(JSONB, nullable=False, default=dict)  # {col, row, colSpan, rowSpan}
+    created_at: datetime = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: datetime | None = Column(
+        DateTime(timezone=True), nullable=True, onupdate=func.now()
+    )
+
+    model = relationship("Model")
+    dashboard = relationship("Dashboard", back_populates="widgets")

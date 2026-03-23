@@ -6,11 +6,21 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict
 
 
+class DashboardCreate(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class DashboardUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
 class WidgetCreate(BaseModel):
     name: str
-    widget_type: str = "table"  # table|card
+    widget_type: str = "table"
     config: dict[str, Any] = {}
-    position: dict[str, Any] = {}  # {x, y, w, h}
+    position: dict[str, Any] = {}
 
 
 class WidgetUpdate(BaseModel):
@@ -22,6 +32,7 @@ class WidgetUpdate(BaseModel):
 
 class WidgetResponse(BaseModel):
     id: str
+    dashboard_id: str
     model_id: str
     name: str
     widget_type: str
@@ -32,6 +43,16 @@ class WidgetResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class DashboardResponse(BaseModel):
+    id: str
+    model_id: str
+    name: str
+    description: str | None = None
+    widgets: list[WidgetResponse] = []
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class LayoutUpdate(BaseModel):
-    """Batch-update widget positions."""
-    widgets: list[dict[str, Any]]  # [{id, position: {x, y, w, h}}]
+    widgets: list[dict[str, Any]]

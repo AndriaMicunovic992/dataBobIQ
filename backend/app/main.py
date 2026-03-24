@@ -95,7 +95,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Could not re-register DuckDB views on startup: %s", exc)
 
-    # Ensure dashboard tables exist (fallback if Alembic migration 0003 was skipped)
+    # Ensure dashboard tables exist and have all required columns
     try:
         from sqlalchemy import text as sa_text
 
@@ -123,6 +123,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     updated_at TIMESTAMPTZ
                 )
             """))
+            # Backfill columns that may be missing from older table versions
+            _backfill_cols = [
+                ("dashboard_widgets", "dashboard_id", "VARCHAR REFERENCES dashboards(id) ON DELETE CASCADE"),
+                ("dashboard_widgets", "model_id", "VARCHAR REFERENCES models(id) ON DELETE CASCADE"),
+                ("dashboard_widgets", "widget_type", "VARCHAR(50) DEFAULT 'table'"),
+                ("dashboard_widgets", "config", "JSONB DEFAULT '{}'"),
+                ("dashboard_widgets", "position", "JSONB DEFAULT '{}'"),
+            ]
+            for tbl, col, col_def in _backfill_cols:
+                await db.execute(sa_text(f"""
+                    DO $$ BEGIN
+                        ALTER TABLE {tbl} ADD COLUMN {col} {col_def};
+                    EXCEPTION WHEN duplicate_column THEN NULL;
+                    END $$;
+                """))
             await db.commit()
             logger.info("Dashboard tables ensured.")
     except Exception as exc:

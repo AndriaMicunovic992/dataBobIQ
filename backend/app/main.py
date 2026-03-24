@@ -95,6 +95,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as exc:
         logger.warning("Could not re-register DuckDB views on startup: %s", exc)
 
+    # Ensure dashboard tables exist (fallback if Alembic migration 0003 was skipped)
+    try:
+        from sqlalchemy import text as sa_text
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(sa_text("""
+                CREATE TABLE IF NOT EXISTS dashboards (
+                    id VARCHAR PRIMARY KEY,
+                    model_id VARCHAR NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+                    name VARCHAR(255) NOT NULL,
+                    description TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ
+                )
+            """))
+            await db.execute(sa_text("""
+                CREATE TABLE IF NOT EXISTS dashboard_widgets (
+                    id VARCHAR PRIMARY KEY,
+                    dashboard_id VARCHAR NOT NULL REFERENCES dashboards(id) ON DELETE CASCADE,
+                    model_id VARCHAR NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+                    name VARCHAR(255) NOT NULL,
+                    widget_type VARCHAR(50) NOT NULL DEFAULT 'table',
+                    config JSONB NOT NULL DEFAULT '{}',
+                    position JSONB NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    updated_at TIMESTAMPTZ
+                )
+            """))
+            await db.commit()
+            logger.info("Dashboard tables ensured.")
+    except Exception as exc:
+        logger.warning("Could not ensure dashboard tables: %s", exc)
+
     yield
 
     logger.info("dataBobIQ API shutting down.")

@@ -159,7 +159,7 @@ function CreateDashboardModal({ modelId, onClose, onCreated }) {
   );
 }
 
-function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, chatOpen, onToggleChat, dashboards, onCreateDashboard }) {
+function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, chatOpen, onToggleChat, dashboards, onCreateDashboard, onDeleteDashboard }) {
   const selectedModel = models?.find((m) => m.id === selectedModelId);
 
   return (
@@ -276,13 +276,32 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
             const dashTabId = `dashboard-${dash.id}`;
             const isActive = activeTab === dashTabId;
             return (
-              <NavItem
-                key={dash.id}
-                icon={'\u25A6'}
-                label={dash.name}
-                active={isActive}
-                onClick={() => onTabChange(dashTabId)}
-              />
+              <div key={dash.id} style={{ display: 'flex', alignItems: 'center', position: 'relative' }}
+                onMouseEnter={(e) => { const btn = e.currentTarget.querySelector('.dash-del'); if (btn) btn.style.opacity = '1'; }}
+                onMouseLeave={(e) => { const btn = e.currentTarget.querySelector('.dash-del'); if (btn) btn.style.opacity = '0'; }}
+              >
+                <div style={{ flex: 1 }}>
+                  <NavItem
+                    icon={'\u25A6'}
+                    label={dash.name}
+                    active={isActive}
+                    onClick={() => onTabChange(dashTabId)}
+                  />
+                </div>
+                <button
+                  className="dash-del"
+                  onClick={(e) => { e.stopPropagation(); if (window.confirm(`Delete dashboard "${dash.name}"?`)) onDeleteDashboard(dash.id); }}
+                  style={{
+                    position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'rgba(255,255,255,0.4)', fontSize: 12, padding: '2px 4px',
+                    opacity: 0, transition: 'opacity 0.15s',
+                  }}
+                  title="Delete dashboard"
+                >
+                  ✕
+                </button>
+              </div>
             );
           })}
           <button
@@ -433,6 +452,15 @@ export default function App() {
     deleteModelMut.mutate(id);
   }, [deleteModelMut]);
 
+  const deleteDashMut = useDeleteDashboard(selectedModelId);
+
+  const handleDeleteDashboard = useCallback((dashId) => {
+    deleteDashMut.mutate(dashId);
+    if (activeTab === `dashboard-${dashId}`) {
+      setActiveTab('schema');
+    }
+  }, [deleteDashMut, activeTab]);
+
   const handleDashboardCreated = useCallback((dashId) => {
     setActiveTab(`dashboard-${dashId}`);
     setShowCreateDashboardModal(false);
@@ -489,6 +517,7 @@ export default function App() {
         onToggleChat={() => setChatOpen((v) => !v)}
         dashboards={dashboards}
         onCreateDashboard={() => setShowCreateDashboardModal(true)}
+        onDeleteDashboard={handleDeleteDashboard}
       />
 
       {/* Main content */}

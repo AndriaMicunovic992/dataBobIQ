@@ -8,9 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.models.metadata import DatasetRelationship
+from app.models.metadata import Dataset, DatasetRelationship
 from app.schemas.pivot import PivotRequest, PivotResponse
 from app.services.pivot_engine import execute_pivot
+from app.duckdb_engine import register_dataset, _registered_datasets
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +35,19 @@ async def run_pivot(
         len(body.measures),
         body.join_dimensions,
     )
+
+    # Ensure the dataset's DuckDB view is registered
+    if body.dataset_id not in _registered_datasets:
+        ds_result = await db.execute(
+            select(Dataset).where(Dataset.id == body.dataset_id, Dataset.status == "active")
+        )
+        ds = ds_result.scalar_one_or_none()
+        if ds and ds.parquet_path:
+            try:
+                await asyncio.to_thread(register_dataset, ds.id, ds.parquet_path)
+                logger.info("Lazily registered DuckDB view for dataset %s", ds.id)
+            except Exception as exc:
+                logger.warning("Failed to register dataset %s: %s", ds.id, exc)
 
     # Look up relationships if cross-dataset dimensions are requested
     relationships = []

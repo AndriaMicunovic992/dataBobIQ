@@ -53,45 +53,48 @@ export default function DashboardCard({ widget, scenarioId }) {
 
   return (
     <div style={{
-      background: colors.bgCard, borderRadius: radius.lg,
-      border: `1px solid ${colors.border}`, padding: spacing.lg,
-      display: 'flex', flexDirection: 'column', justifyContent: 'center',
-      height: '100%', minHeight: 120,
+      height: '100%', display: 'flex', alignItems: 'center',
+      padding: `${spacing.sm}px ${spacing.lg}px`,
+      boxSizing: 'border-box',
     }}>
-      <div style={{
-        fontSize: typography.fontSizes.xs, color: colors.textMuted,
-        fontFamily: typography.fontFamily, textTransform: 'uppercase',
-        letterSpacing: '0.05em', marginBottom: spacing.xs,
-      }}>
-        {measureLabel}
-      </div>
-      {isLoading ? (
-        <div style={{ fontSize: typography.fontSizes.lg, color: colors.textMuted, fontFamily: 'monospace' }}>...</div>
-      ) : (
-        <>
-          <div style={{
-            fontSize: 28, fontWeight: typography.fontWeights.bold,
-            color: colors.textPrimary, fontFamily: 'monospace', lineHeight: 1.2,
-          }}>
-            {formatBigNum(value)}
-          </div>
-          {scenarioValue && (
-            <div style={{ display: 'flex', gap: spacing.sm, marginTop: spacing.xs, alignItems: 'baseline' }}>
-              <span style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: 'monospace' }}>
-                Scenario: {formatBigNum(scenarioValue.scenario)}
-              </span>
-              {scenarioValue.variance != null && (
-                <span style={{
-                  fontSize: typography.fontSizes.xs, fontFamily: 'monospace',
-                  color: scenarioValue.variance > 0 ? colors.success : scenarioValue.variance < 0 ? colors.danger : colors.textMuted,
-                }}>
-                  {scenarioValue.variance > 0 ? '+' : ''}{formatBigNum(scenarioValue.variance)}
-                </span>
-              )}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{
+          fontSize: typography.fontSizes.xs, color: colors.textMuted,
+          fontFamily: typography.fontFamily, textTransform: 'uppercase',
+          letterSpacing: '0.05em', marginBottom: spacing.xs,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {measureLabel}
+        </div>
+        {isLoading ? (
+          <div style={{ fontSize: typography.fontSizes.lg, color: colors.textMuted, fontFamily: 'monospace' }}>...</div>
+        ) : (
+          <>
+            <div style={{
+              fontSize: 26, fontWeight: typography.fontWeights.bold,
+              color: colors.textPrimary, fontFamily: typography.fontFamily, lineHeight: 1.2,
+              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+            }}>
+              {formatBigNum(value)}
             </div>
-          )}
-        </>
-      )}
+            {scenarioValue && (
+              <div style={{ display: 'flex', gap: spacing.sm, marginTop: 2, alignItems: 'baseline' }}>
+                <span style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: 'monospace' }}>
+                  {formatBigNum(scenarioValue.scenario)}
+                </span>
+                {scenarioValue.variance != null && (
+                  <span style={{
+                    fontSize: typography.fontSizes.xs, fontFamily: 'monospace',
+                    color: scenarioValue.variance > 0 ? colors.success : scenarioValue.variance < 0 ? colors.danger : colors.textMuted,
+                  }}>
+                    {scenarioValue.variance > 0 ? '+' : ''}{formatBigNum(scenarioValue.variance)}
+                  </span>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

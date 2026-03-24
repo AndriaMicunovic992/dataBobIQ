@@ -215,7 +215,7 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, onDragStart, onResi
       </div>
 
       {/* Body */}
-      <div style={{ flex: 1, overflow: 'auto', padding: widget.widget_type === 'card' ? 0 : undefined }}>
+      <div style={{ flex: 1, overflow: widget.widget_type === 'card' ? 'hidden' : 'auto', padding: widget.widget_type === 'card' ? 0 : undefined }}>
         {widget.widget_type === 'card' ? (
           <DashboardCard widget={widget} scenarioId={scenarioId} />
         ) : (
@@ -660,9 +660,23 @@ export default function DashboardView({ dashboardId, modelId }) {
     if (editingWidget && editingWidget.id) {
       updateMut.mutate({ id: editingWidget.id, ...widgetData }, { onSuccess: () => setEditingWidget(null) });
     } else {
-      createMut.mutate(widgetData, { onSuccess: () => setEditingWidget(null) });
+      // Auto-position: place new widget below existing ones
+      let nextRow = 1;
+      for (const w of widgets) {
+        const pos = w.position || {};
+        const endRow = (pos.row || 1) + (pos.rowSpan || 4);
+        if (endRow > nextRow) nextRow = endRow;
+      }
+      const isCard = widgetData.widget_type === 'card';
+      const position = {
+        col: 1,
+        row: nextRow,
+        colSpan: isCard ? 3 : 6,
+        rowSpan: isCard ? 2 : 4,
+      };
+      createMut.mutate({ ...widgetData, position }, { onSuccess: () => setEditingWidget(null) });
     }
-  }, [editingWidget, createMut, updateMut]);
+  }, [editingWidget, createMut, updateMut, widgets]);
 
   const handleDelete = useCallback((id) => {
     deleteMut.mutate(id);

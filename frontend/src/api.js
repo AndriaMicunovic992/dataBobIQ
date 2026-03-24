@@ -81,16 +81,23 @@ export const createKnowledge = (modelId, data) =>
   req(`/models/${modelId}/knowledge`, json(data));
 export const deleteKnowledge = (id) => req(`/knowledge/${id}`, { method: 'DELETE' });
 
-// Dashboard
-export const listWidgets = (modelId) => req(`/models/${modelId}/dashboard/widgets`);
-export const createWidget = (modelId, data) =>
-  req(`/models/${modelId}/dashboard/widgets`, json(data));
+// Dashboards
+export const listDashboards = (modelId) => req(`/models/${modelId}/dashboards`);
+export const createDashboard = (modelId, data) =>
+  req(`/models/${modelId}/dashboards`, json(data));
+export const getDashboard = (id) => req(`/dashboards/${id}`);
+export const updateDashboard = (id, data) =>
+  req(`/dashboards/${id}`, { ...json(data), method: 'PUT' });
+export const deleteDashboard = (id) =>
+  req(`/dashboards/${id}`, { method: 'DELETE' });
+export const createWidget = (dashboardId, data) =>
+  req(`/dashboards/${dashboardId}/widgets`, json(data));
 export const updateWidget = (id, data) =>
   req(`/dashboard/widgets/${id}`, { ...json(data), method: 'PUT' });
 export const deleteWidget = (id) =>
   req(`/dashboard/widgets/${id}`, { method: 'DELETE' });
-export const updateDashboardLayout = (modelId, widgets) =>
-  req(`/models/${modelId}/dashboard/layout`, { ...json({ widgets }), method: 'PUT' });
+export const updateDashboardLayout = (dashboardId, widgets) =>
+  req(`/dashboards/${dashboardId}/layout`, { ...json({ widgets }), method: 'PUT' });
 
 // SSE streaming chat
 export function streamChat(modelId, body, onEvent) {

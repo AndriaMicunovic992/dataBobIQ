@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.duckdb_engine import execute_query, view_name_for
+from app.duckdb_engine import execute_query, view_name_for, register_dataset, _registered_datasets
 from app.schemas.datasets import DatasetMetadata, DimensionInfo, MeasureInfo, MetadataResponse
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,14 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
     dataset_metas: list[DatasetMetadata] = []
 
     for dataset in datasets:
+        # Ensure DuckDB view is registered for this dataset
+        if dataset.id not in _registered_datasets and dataset.parquet_path:
+            try:
+                register_dataset(dataset.id, dataset.parquet_path)
+                logger.info("Lazily registered DuckDB view for dataset %s", dataset.id)
+            except Exception:
+                logger.warning("Could not register dataset %s for metadata", dataset.id, exc_info=True)
+
         view_name = view_name_for(dataset.id)
         columns = dataset.columns or []
 

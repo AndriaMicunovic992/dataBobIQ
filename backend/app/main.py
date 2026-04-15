@@ -51,6 +51,59 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             resolved_data_dir,
         )
 
+    # Diagnostic: is data_dir actually a mount point? On Linux, os.path.ismount
+    # returns True only if the path is a real filesystem mount (i.e. a
+    # persistent volume). If it's just an ordinary directory inside the
+    # container image, it's EPHEMERAL — everything written to it is wiped on
+    # every redeploy. This is almost always the root cause when the app says
+    # "parquet file missing" after a Railway redeploy even though DATA_DIR is
+    # correct. Persistence survives to the Railway "Volumes" tab.
+    try:
+        is_mount = os.path.ismount(resolved_data_dir)
+        logger.info(
+            "Data dir mount check: os.path.ismount(%s) = %s",
+            resolved_data_dir, is_mount,
+        )
+        if not is_mount:
+            logger.warning(
+                "EPHEMERAL STORAGE WARNING: %s is NOT a mount point. "
+                "Any files written here will be LOST on the next redeploy. "
+                "If you're on Railway, verify the volume 'databobiq-data' is "
+                "attached to this service and mounted at /app/data in the "
+                "Railway dashboard → Service → Settings → Volumes.",
+                resolved_data_dir,
+            )
+        # Also probe persistence by writing a sentinel file with a timestamp
+        # and comparing to any prior value on each startup. This lets the
+        # user see in the logs whether the volume actually survives deploys.
+        from datetime import datetime, timezone
+        sentinel = data_dir / ".mount_sentinel"
+        now_iso = datetime.now(timezone.utc).isoformat()
+        previous: str | None = None
+        if sentinel.exists():
+            try:
+                previous = sentinel.read_text().strip()
+            except Exception:
+                previous = None
+        try:
+            sentinel.write_text(now_iso)
+        except Exception as exc:
+            logger.warning("Could not write mount sentinel %s: %s", sentinel, exc)
+        if previous:
+            logger.info(
+                "Data dir persistence: sentinel previous=%s current=%s "
+                "(if previous is from a prior deploy, the volume IS persisting)",
+                previous, now_iso,
+            )
+        else:
+            logger.info(
+                "Data dir persistence: sentinel FRESH — no prior value found. "
+                "If this repeats on the NEXT deploy too, the volume is NOT "
+                "persisting and you need to attach a volume to this service.",
+            )
+    except Exception as exc:
+        logger.warning("Mount diagnostic failed: %s", exc)
+
     # Re-register all active datasets' parquet files in DuckDB
     # (views are in-memory and lost on restart)
     try:

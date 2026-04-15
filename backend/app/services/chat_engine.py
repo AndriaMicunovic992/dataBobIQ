@@ -823,6 +823,7 @@ async def _execute_tool(
                         scenario_id=scenario.id, rules=rule_dicts,
                         model_id=model_id, data_dir=app_settings.data_dir,
                         dataset_ids=ds_ids,
+                        base_config=sc_obj.base_config,
                     )
                 except Exception as exc:
                     logger.warning("Recompute after create_scenario failed: %s", exc)
@@ -910,6 +911,7 @@ async def _execute_tool(
                         scenario_id=scenario_id_input, rules=rule_dicts,
                         model_id=scenario.model_id, data_dir=app_settings.data_dir,
                         dataset_ids=ds_ids,
+                        base_config=sc_obj.base_config,
                     )
                 except Exception as exc:
                     logger.warning("Recompute after add_scenario_rule failed: %s", exc)

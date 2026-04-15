@@ -83,6 +83,7 @@ async def _recompute_from_db(scenario: Scenario, db: AsyncSession) -> int:
         data_dir=settings.data_dir,
         dataset_ids=dataset_ids,
         dataset_id=scenario.dataset_id,
+        base_config=scenario.base_config,
     )
 
 

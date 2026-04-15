@@ -245,56 +245,202 @@ def _resolve_dataset_for_rule(
     return dataset_ids[0] if dataset_ids else None
 
 
-def _apply_rules_to_df(
+_TIME_COL_CANDIDATES: tuple[str, ...] = (
+    "date",
+    "posting_date",
+    "fiscal_period",
+    "period",
+    "year_month",
+    "year",
+)
+
+
+def _detect_time_cols(df: pl.DataFrame) -> list[str]:
+    """Return the subset of known time columns present on the dataframe."""
+    return [c for c in _TIME_COL_CANDIDATES if c in df.columns]
+
+
+def _infer_base_year_from_df(df: pl.DataFrame) -> int | None:
+    """Best-effort: find the latest year present in the dataframe.
+
+    Used as a fallback when ``base_config.base_year`` is missing. Looks at
+    ``year`` (int), ``date``/``posting_date`` (date/datetime), or
+    ``year_month`` / ``period`` strings starting with ``YYYY``.
+    """
+    try:
+        if "year" in df.columns:
+            m = df.select(pl.col("year").max()).item()
+            return int(m) if m is not None else None
+        for col in ("date", "posting_date"):
+            if col in df.columns and df.schema[col] in (pl.Date, pl.Datetime):
+                m = df.select(pl.col(col).dt.year().max()).item()
+                if m is not None:
+                    return int(m)
+        for col in ("year_month", "period"):
+            if col in df.columns:
+                m = (
+                    df.select(pl.col(col).cast(pl.String).str.slice(0, 4).max())
+                    .item()
+                )
+                if m:
+                    return int(m)
+    except Exception as exc:
+        logger.debug("Could not infer base_year: %s", exc)
+    return None
+
+
+def _shift_time_column(df: pl.DataFrame, col: str, year_delta: int) -> pl.DataFrame:
+    """Shift a single time column forward by ``year_delta`` years.
+
+    Handles three shapes:
+    * Date / Datetime: offset by N years.
+    * Integer year (4-digit): add year_delta.
+    * ``YYYY…`` string (year_month, period, fiscal_period): rewrite the
+      leading 4 chars to ``year + year_delta`` and keep the suffix.
+    """
+    if col not in df.columns or year_delta == 0:
+        return df
+    dtype = df.schema[col]
+    try:
+        if dtype in (pl.Date, pl.Datetime):
+            return df.with_columns(
+                pl.col(col).dt.offset_by(f"{year_delta}y").alias(col)
+            )
+        if dtype.is_integer():
+            return df.with_columns((pl.col(col) + year_delta).alias(col))
+        if dtype == pl.Utf8 or dtype == pl.String:
+            leading4 = pl.col(col).str.slice(0, 4)
+            shifted_year = (leading4.cast(pl.Int32, strict=False) + year_delta).cast(
+                pl.String
+            )
+            return df.with_columns(
+                pl.when(pl.col(col).str.contains(r"^\d{4}"))
+                .then(shifted_year + pl.col(col).str.slice(4))
+                .otherwise(pl.col(col))
+                .alias(col)
+            )
+    except Exception as exc:
+        logger.warning(
+            "Failed to shift time column %s (dtype=%s) by %dy: %s",
+            col, dtype, year_delta, exc,
+        )
+    return df
+
+
+def _filter_to_base_year(df: pl.DataFrame, base_year: int) -> pl.DataFrame:
+    """Return rows of ``df`` that belong to ``base_year``.
+
+    Preference order: ``year`` int column, then ``date``/``posting_date``
+    year extract, then string columns starting with ``YYYY``.
+    """
+    if "year" in df.columns:
+        return df.filter(pl.col("year") == base_year)
+    for col in ("date", "posting_date"):
+        if col in df.columns and df.schema[col] in (pl.Date, pl.Datetime):
+            return df.filter(pl.col(col).dt.year() == base_year)
+    for col in ("year_month", "period"):
+        if col in df.columns:
+            return df.filter(
+                pl.col(col).cast(pl.String).str.slice(0, 4)
+                == str(base_year)
+            )
+    logger.warning(
+        "Cannot locate a time column to scope to base_year=%s; returning empty frame",
+        base_year,
+    )
+    return df.clear()
+
+
+def _apply_rule_to_projection(
     df: pl.DataFrame,
-    rules: list[dict],
-    scenario_id: str,
+    rule: dict,
+    target_year: int,
 ) -> tuple[pl.DataFrame, int]:
-    """Apply a list of rules to a DataFrame in order. Returns (modified_df, total_affected)."""
-    total_affected = 0
+    """Apply a single rule's filter + transformation to an already-projected frame.
 
+    ``df`` has already been shifted to the target year. The rule's
+    ``filter_expr`` narrows which rows to modify (e.g. account IN 3400/3401/3402),
+    and ``period_from`` / ``period_to`` can further scope within the target
+    year (e.g. Q3 only). Returns (modified_df, affected_row_count).
+    """
+    target_field = rule.get("target_field", "amount")
+    rule_type = rule.get("rule_type", "multiplier")
+    adjustment = rule.get("adjustment") or {}
+    filter_expr = rule.get("filter_expr") or {}
+    period_from = rule.get("period_from")
+    period_to = rule.get("period_to")
+
+    mask = _build_filter_mask(filter_expr, df)
+
+    # Optional period window *inside* the target year (e.g. "2026-07" to "2026-09").
+    if period_from or period_to:
+        period_col: str | None = None
+        for candidate in ("year_month", "period", "date", "posting_date", "fiscal_period"):
+            if candidate in df.columns:
+                period_col = candidate
+                break
+        if period_col:
+            col_expr = pl.col(period_col).cast(pl.String)
+            if period_from:
+                mask = mask & (col_expr >= period_from)
+            if period_to:
+                mask = mask & (col_expr <= period_to)
+
+    affected = df.filter(mask).height
+    if affected == 0:
+        return df, 0
+
+    if target_field not in df.columns:
+        logger.warning(
+            "Target field %s not in dataset; rule %r has no effect",
+            target_field, rule.get("name"),
+        )
+        return df, 0
+
+    if rule_type == "multiplier":
+        factor = adjustment.get("factor", 1.0)
+        df = df.with_columns(
+            pl.when(mask)
+            .then(pl.col(target_field) * factor)
+            .otherwise(pl.col(target_field))
+            .alias(target_field)
+        )
+    elif rule_type == "offset":
+        offset_val = adjustment.get("offset", 0.0)
+        df = df.with_columns(
+            pl.when(mask)
+            .then(pl.col(target_field) + offset_val)
+            .otherwise(pl.col(target_field))
+            .alias(target_field)
+        )
+    elif rule_type == "set_value":
+        new_val = adjustment.get("value", 0.0)
+        df = df.with_columns(
+            pl.when(mask)
+            .then(pl.lit(new_val))
+            .otherwise(pl.col(target_field))
+            .alias(target_field)
+        )
+    else:
+        logger.warning("Unknown rule_type %r; no changes applied", rule_type)
+        return df, 0
+
+    return df, affected
+
+
+def _target_year_from_rules(rules: list[dict]) -> int | None:
+    """Infer the scenario's target year from the first rule that has ``period_from``.
+
+    All rules in a scenario are expected to target the same forecast year.
+    """
     for rule in rules:
-        target_field = rule.get("target_field", "amount")
-        rule_type = rule.get("rule_type", "multiplier")
-        adjustment = rule.get("adjustment", {})
-        filter_expr = rule.get("filter_expr") or {}
-
-        mask = _build_filter_mask(filter_expr, df)
-
-        affected = df.filter(mask).height
-        total_affected += affected
-
-        if target_field not in df.columns:
-            logger.warning("Target field %s not in dataset; skipping rule", target_field)
-            continue
-
-        if rule_type == "multiplier":
-            factor = adjustment.get("factor", 1.0)
-            df = df.with_columns(
-                pl.when(mask)
-                .then(pl.col(target_field) * factor)
-                .otherwise(pl.col(target_field))
-                .alias(target_field)
-            )
-        elif rule_type == "offset":
-            offset_val = adjustment.get("offset", 0.0)
-            df = df.with_columns(
-                pl.when(mask)
-                .then(pl.col(target_field) + offset_val)
-                .otherwise(pl.col(target_field))
-                .alias(target_field)
-            )
-        elif rule_type == "set_value":
-            new_val = adjustment.get("value", 0.0)
-            df = df.with_columns(
-                pl.when(mask)
-                .then(pl.lit(new_val))
-                .otherwise(pl.col(target_field))
-                .alias(target_field)
-            )
-
-    df = df.with_columns(pl.lit(f"scenario:{scenario_id}").alias("data_layer"))
-    return df, total_affected
+        pf = rule.get("period_from")
+        if pf:
+            try:
+                return int(str(pf)[:4])
+            except (ValueError, TypeError):
+                continue
+    return None
 
 
 def recompute_scenario(
@@ -304,19 +450,46 @@ def recompute_scenario(
     data_dir: str,
     dataset_ids: list[str] | None = None,
     dataset_id: str | None = None,
+    base_config: dict | None = None,
 ) -> int:
-    """Recompute all scenario overrides from scratch.
+    """Recompute a scenario as a **forward projection** from a base year.
 
-    Supports multi-dataset scenarios: each rule may target a different dataset
-    via its ``dataset_id`` key.  When a rule has no explicit dataset_id the
-    engine auto-resolves by inspecting which dataset contains the target field
-    and filter columns.
+    This is the FP&A "flex last year forward" pattern:
 
-    For backward compat a single ``dataset_id`` can still be passed — it is
-    used as the fallback when resolution fails.
+    1. Read each fact dataset's baseline parquet.
+    2. Filter to rows where ``year == base_year`` (from ``base_config.base_year``,
+       or fall back to the latest year present in the data).
+    3. Shift every known time column (``date``, ``year``, ``year_month``, …)
+       forward by ``target_year - base_year`` years so the rows look like
+       they belong to the forecast period.
+    4. Apply each rule's ``filter_expr`` + ``rule_type`` transformation to the
+       matching rows. Rules without a matching ``filter_expr`` carry the
+       base-year value forward unchanged (flat plan).
+    5. Write **only** the synthesized target-period rows to the scenario
+       parquet. The base parquet is never duplicated — at query time the
+       pivot engine does a ``UNION ALL`` of base + scenario views.
 
-    Returns total affected row count.
+    The legacy "mutate existing rows in place" behaviour is gone: it couldn't
+    produce rows for periods that didn't already exist, which is exactly what
+    forecasting needs. If ``base_config`` is missing or no target_year can be
+    inferred from the rules, we log a clear warning and return 0.
+
+    Returns the total number of rows materially changed by rules (not the
+    number of rows written to the scenario parquet — all base-year rows are
+    copied forward regardless of whether any rule touched them).
     """
+    base_config = base_config or {}
+    declared_base_year = base_config.get("base_year")
+    target_year = _target_year_from_rules(rules)
+
+    if target_year is None:
+        logger.warning(
+            "Scenario %s: no rule has period_from, cannot determine target year — "
+            "skipping recompute",
+            scenario_id,
+        )
+        return 0
+
     # Build the list of available dataset IDs
     all_ds_ids: list[str] = list(dataset_ids or [])
     if dataset_id and dataset_id not in all_ds_ids:
@@ -333,7 +506,9 @@ def recompute_scenario(
         if resolved:
             ds_rules[resolved].append(rule)
         else:
-            logger.warning("Could not resolve dataset for rule %r; skipping", rule.get("name"))
+            logger.warning(
+                "Could not resolve dataset for rule %r; skipping", rule.get("name"),
+            )
 
     total_affected = 0
     result_frames: list[pl.DataFrame] = []
@@ -346,30 +521,104 @@ def recompute_scenario(
             logger.warning("Cannot read parquet for dataset %s: %s", ds_id, exc)
             continue
 
-        df, affected = _apply_rules_to_df(df, ds_rule_list, scenario_id)
-        total_affected += affected
-        result_frames.append(df)
+        # Resolve base_year per dataset so multi-dataset scenarios still work
+        # when one dataset's max year differs from another.
+        base_year: int | None = (
+            int(declared_base_year) if declared_base_year is not None else None
+        )
+        if base_year is None:
+            base_year = _infer_base_year_from_df(df)
+            if base_year is None:
+                logger.warning(
+                    "Dataset %s has no time column; cannot determine base_year",
+                    ds_id,
+                )
+                continue
+            logger.info(
+                "Scenario %s dataset %s: base_year not set, inferred %d from data",
+                scenario_id, ds_id, base_year,
+            )
+
+        year_delta = target_year - base_year
+        if year_delta <= 0:
+            logger.warning(
+                "Scenario %s dataset %s: target_year=%d is not after base_year=%d; "
+                "refusing to project backwards",
+                scenario_id, ds_id, target_year, base_year,
+            )
+            continue
+
+        base_rows = _filter_to_base_year(df, base_year)
+        if base_rows.height == 0:
+            logger.warning(
+                "Scenario %s dataset %s: no rows for base_year=%d — scenario will "
+                "contain no projected data for this dataset",
+                scenario_id, ds_id, base_year,
+            )
+            continue
+
+        # Shift every known time column forward so the projected rows look
+        # like they belong to the forecast period.
+        projected = base_rows
+        for col in _detect_time_cols(projected):
+            projected = _shift_time_column(projected, col, year_delta)
+
+        # Apply each rule to the projection.
+        ds_affected = 0
+        for rule in ds_rule_list:
+            projected, affected = _apply_rule_to_projection(
+                projected, rule, target_year,
+            )
+            ds_affected += affected
+
+        # Tag every row with the scenario identifier for traceability.
+        if "data_layer" in projected.columns:
+            projected = projected.with_columns(
+                pl.lit(f"scenario:{scenario_id}").alias("data_layer")
+            )
+        else:
+            projected = projected.with_columns(
+                pl.lit(f"scenario:{scenario_id}").alias("data_layer")
+            )
+
+        logger.info(
+            "Scenario %s dataset %s: projected %d rows from %d→%d, %d affected by rules",
+            scenario_id, ds_id, projected.height, base_year, target_year, ds_affected,
+        )
+        total_affected += ds_affected
+        result_frames.append(projected)
 
     if not result_frames:
-        logger.warning("No data produced for scenario %s", scenario_id)
+        logger.warning(
+            "Scenario %s: no projected data produced — writing empty scenario parquet",
+            scenario_id,
+        )
+        # Still write an empty parquet so downstream queries don't 404.
+        # Use an empty frame with a single column to keep parquet valid.
+        empty = pl.DataFrame({"data_layer": pl.Series([], dtype=pl.String)})
+        scenario_path = get_scenario_path(data_dir, model_id, scenario_id)
+        write_parquet(empty, scenario_path)
+        try:
+            register_dataset(f"sc_{scenario_id}", scenario_path)
+        except Exception as exc:
+            logger.warning("Failed to register empty scenario view: %s", exc)
         return 0
 
-    # Concatenate all dataset results (they may have different schemas)
-    # Use diagonal concat to handle differing columns across datasets
-    if len(result_frames) == 1:
-        combined = result_frames[0]
-    else:
-        combined = pl.concat(result_frames, how="diagonal")
+    combined = (
+        result_frames[0]
+        if len(result_frames) == 1
+        else pl.concat(result_frames, how="diagonal")
+    )
 
     scenario_path = get_scenario_path(data_dir, model_id, scenario_id)
     write_parquet(combined, scenario_path)
-
-    # Register in DuckDB
     register_dataset(f"sc_{scenario_id}", scenario_path)
 
     logger.info(
-        "Recomputed scenario %s: %d rules across %d datasets, %d total affected rows",
-        scenario_id, len(rules), len(ds_rules), total_affected,
+        "Recomputed scenario %s: target_year=%d, %d rules across %d datasets, "
+        "%d projected rows, %d affected by rules",
+        scenario_id, target_year, len(rules), len(ds_rules),
+        len(combined), total_affected,
     )
     return total_affected
 
@@ -561,27 +810,38 @@ def build_scenario_merge_sql(
     return sql, params
 
 
-def _ensure_scenario_view(scenario_id: str, model_id: str, data_dir: str = "") -> None:
-    """Make sure the DuckDB view for a scenario exists, re-registering from parquet if needed."""
+def ensure_scenario_view(scenario_id: str, model_id: str, data_dir: str = "") -> None:
+    """Ensure the DuckDB view ``ds_sc_<scenario_id>`` is registered.
+
+    Called lazily at query time by the pivot / variance / waterfall paths so
+    that a scenario's parquet can be picked up without a full app restart.
+    Raises ``ValueError`` if no scenario parquet exists on disk.
+    """
     resolved_dir = data_dir or settings.data_dir
     view_key = f"sc_{scenario_id}"
     view_name = view_name_for(view_key)
     conn = get_duckdb_conn()
     try:
         conn.execute(f"SELECT 1 FROM {view_name} LIMIT 0")
+        return
     except Exception:
-        # View doesn't exist — try to register from parquet file on disk
-        scenario_path = get_scenario_path(resolved_dir, model_id, scenario_id)
-        import os
-        if os.path.exists(scenario_path):
-            register_dataset(view_key, scenario_path)
-            logger.info("Re-registered scenario view %s from %s", view_name, scenario_path)
-        else:
-            raise ValueError(
-                f"Scenario {scenario_id} has no computed data. "
-                f"Looked in {scenario_path}. "
-                f"Please recompute the scenario first."
-            )
+        pass
+    # View doesn't exist — try to register from parquet file on disk
+    scenario_path = get_scenario_path(resolved_dir, model_id, scenario_id)
+    import os
+    if os.path.exists(scenario_path):
+        register_dataset(view_key, scenario_path)
+        logger.info("Re-registered scenario view %s from %s", view_name, scenario_path)
+    else:
+        raise ValueError(
+            f"Scenario {scenario_id} has no computed data. "
+            f"Looked in {scenario_path}. "
+            f"Please recompute the scenario first."
+        )
+
+
+# Backward-compatible private alias kept for internal callers.
+_ensure_scenario_view = ensure_scenario_view
 
 
 def compute_variance(

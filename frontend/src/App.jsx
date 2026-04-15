@@ -14,6 +14,9 @@ import KnowledgePanel from './components/KnowledgePanel.jsx';
 
 const SCHEMA_TAB = { id: 'schema', label: 'Data Model', icon: '\u2B21' };
 const KNOWLEDGE_TAB = { id: 'knowledge', label: 'Knowledge', icon: '\u25C7' };
+const MODEL_ICON = '\u25A3'; // ▣ — model selector
+const DASHBOARD_ICON = '\u25A6'; // ▦ — single dashboard
+const UPLOAD_ICON = '\u2B06'; // ⬆
 
 function SectionHeader({ label }) {
   return (
@@ -174,6 +177,103 @@ function CreateDashboardModal({ modelId, onClose, onCreated }) {
 const SIDEBAR_COLLAPSED_W = 60;
 const SIDEBAR_EXPANDED_W = 240;
 
+function CollapsedIconButton({ icon, title, active, onClick }) {
+  const [hovered, setHovered] = React.useState(false);
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      title={title}
+      style={{
+        width: 40, height: 40,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: active ? colors.sidebarActive : hovered ? colors.sidebarHover : 'transparent',
+        border: 'none', borderRadius: radius.md,
+        color: active ? colors.sidebarTextActive : colors.sidebarText,
+        fontSize: 18, cursor: 'pointer',
+        transition: transitions.fast,
+        margin: '2px auto',
+      }}
+    >
+      {icon}
+    </button>
+  );
+}
+
+function CollapsedSidebar({ selectedModelId, selectedModel, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, dashboards }) {
+  return (
+    <div style={{
+      width: SIDEBAR_COLLAPSED_W, minWidth: SIDEBAR_COLLAPSED_W,
+      display: 'flex', flexDirection: 'column', alignItems: 'center',
+      minHeight: '100vh', padding: `${spacing.sm}px 0`,
+    }}>
+      {/* Brand icon */}
+      <div style={{
+        width: 36, height: 36, borderRadius: radius.md,
+        background: `linear-gradient(135deg, ${colors.primary}, #7c3aed)`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        fontSize: 16, color: 'white', fontWeight: 700,
+        marginBottom: spacing.md,
+      }}>B</div>
+
+      {/* Model icon — click to open/switch model */}
+      <CollapsedIconButton
+        icon={MODEL_ICON}
+        title={selectedModel ? `Model: ${selectedModel.name} (click to switch)` : 'Select model'}
+        active={!!selectedModel}
+        onClick={() => (selectedModel ? onSelectModel(null) : onCreateModel())}
+      />
+
+      {selectedModelId && (
+        <>
+          <div style={{ width: 36, borderTop: `1px solid rgba(255,255,255,0.08)`, margin: `${spacing.sm}px 0` }} />
+
+          {/* Dashboard icons */}
+          {(dashboards || []).map((dash) => {
+            const dashTabId = `dashboard-${dash.id}`;
+            return (
+              <CollapsedIconButton
+                key={dash.id}
+                icon={DASHBOARD_ICON}
+                title={dash.name}
+                active={activeTab === dashTabId}
+                onClick={() => onTabChange(dashTabId)}
+              />
+            );
+          })}
+
+          <div style={{ width: 36, borderTop: `1px solid rgba(255,255,255,0.08)`, margin: `${spacing.sm}px 0` }} />
+
+          {/* Data Model */}
+          <CollapsedIconButton
+            icon={SCHEMA_TAB.icon}
+            title={SCHEMA_TAB.label}
+            active={activeTab === SCHEMA_TAB.id}
+            onClick={() => onTabChange(SCHEMA_TAB.id)}
+          />
+
+          {/* Knowledge */}
+          <CollapsedIconButton
+            icon={KNOWLEDGE_TAB.icon}
+            title={KNOWLEDGE_TAB.label}
+            active={activeTab === KNOWLEDGE_TAB.id}
+            onClick={() => onTabChange(KNOWLEDGE_TAB.id)}
+          />
+
+          {/* Upload */}
+          <div style={{ flex: 1 }} />
+          <CollapsedIconButton
+            icon={UPLOAD_ICON}
+            title="Upload Dataset"
+            onClick={onUpload}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
 function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, dashboards, onCreateDashboard, onDeleteDashboard, expanded, onExpandedChange }) {
   const selectedModel = models?.find((m) => m.id === selectedModelId);
 
@@ -197,9 +297,21 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
         boxShadow: expanded ? '4px 0 20px rgba(0,0,0,0.18)' : 'none',
       }}
     >
-      {/* Inner container is fixed to the expanded width so content doesn't
-          reflow on hover. The outer aside clips to 60px when collapsed,
-          revealing just the left icon gutter. */}
+      {/* When collapsed, render a purpose-built icon column. When expanded,
+          render the full 240px layout. Switching between two trees (instead
+          of clipping one) keeps both states visually clean. */}
+      {!expanded ? (
+        <CollapsedSidebar
+          selectedModelId={selectedModelId}
+          selectedModel={selectedModel}
+          onSelectModel={onSelectModel}
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          onCreateModel={onCreateModel}
+          onUpload={onUpload}
+          dashboards={dashboards}
+        />
+      ) : (
       <div style={{
         width: SIDEBAR_EXPANDED_W, minWidth: SIDEBAR_EXPANDED_W,
         display: 'flex', flexDirection: 'column', minHeight: '100vh',
@@ -370,6 +482,7 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
         </div>
       </div>
       </div>
+      )}
     </aside>
   );
 }

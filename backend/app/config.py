@@ -27,7 +27,10 @@ class Settings(BaseSettings):
     anthropic_api_key_agent: str = ""
 
     # Storage (raw values from env/config)
-    upload_dir: str = "./uploads"
+    # upload_dir defaults to None → resolved to {data_dir}/uploads so that
+    # raw uploaded files live on the persistent volume alongside parquets.
+    # Set UPLOAD_DIR explicitly to override.
+    upload_dir: str | None = None
     data_dir: str = "./data"
 
     # CORS
@@ -35,8 +38,12 @@ class Settings(BaseSettings):
 
     def model_post_init(self, __context: Any) -> None:
         """Resolve relative storage paths to absolute to avoid CWD-dependent behavior."""
-        object.__setattr__(self, "upload_dir", str(Path(self.upload_dir).resolve()))
         object.__setattr__(self, "data_dir", str(Path(self.data_dir).resolve()))
+        if self.upload_dir is None:
+            # Default: nested under data_dir so raw files ride the same volume.
+            object.__setattr__(self, "upload_dir", str(Path(self.data_dir) / "uploads"))
+        else:
+            object.__setattr__(self, "upload_dir", str(Path(self.upload_dir).resolve()))
 
     # ------------------------------------------------------------------ #
     # Derived URLs                                                         #

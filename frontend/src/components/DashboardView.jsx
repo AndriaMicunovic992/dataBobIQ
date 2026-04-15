@@ -67,14 +67,22 @@ function WidgetErrorState({ error }) {
 // ---------------------------------------------------------------------------
 // Single table widget - calls /pivot with saved config
 // ---------------------------------------------------------------------------
-function DashboardTableWidget({ widget, scenarioId, yearFilter }) {
+function DashboardTableWidget({ widget, scenarioId, yearFilter, metadata }) {
   const config = widget.config || {};
 
   const apiConfig = useMemo(() => {
     if (!config.dataset_id || !config.measures?.length) return null;
     const filters = { ...(config.filters || {}) };
+    const joinDims = { ...(config.join_dimensions || {}) };
     if (yearFilter) {
       filters.year = [String(yearFilter)];
+      // The `year` column may live on a calendar/date dataset, not the fact
+      // table. Route it via join_dimensions so the pivot engine joins the
+      // right table and qualifies the filter column correctly.
+      const yearOwner = metadata?.fieldDatasetMap?.year;
+      if (yearOwner && yearOwner !== config.dataset_id) {
+        joinDims.year = yearOwner;
+      }
     }
     return {
       model_id: config.model_id,
@@ -84,11 +92,11 @@ function DashboardTableWidget({ widget, scenarioId, yearFilter }) {
       measures: config.measures,
       filters,
       scenario_ids: scenarioId ? [scenarioId] : [],
-      join_dimensions: config.join_dimensions || undefined,
+      join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
       include_totals: true,
       limit: config.limit || 500,
     };
-  }, [config, scenarioId, yearFilter]);
+  }, [config, scenarioId, yearFilter, metadata]);
 
   const { data, isLoading, error } = usePivot(apiConfig);
 
@@ -97,7 +105,11 @@ function DashboardTableWidget({ widget, scenarioId, yearFilter }) {
   if (error) return <WidgetErrorState error={error} />;
   if (!data) return null;
 
-  return <PivotTable data={data} />;
+  return (
+    <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
+      <PivotTable data={data} />
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +181,7 @@ function useGridInteraction(widgets, onLayoutChange) {
 // ---------------------------------------------------------------------------
 // Widget wrapper with drag header + resize handle
 // ---------------------------------------------------------------------------
-function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, onDragStart, onResizeStart }) {
+function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, metadata, onDragStart, onResizeStart }) {
   const [hovered, setHovered] = useState(false);
   const pos = widget.position || {};
   const col = pos.col || 1;
@@ -220,12 +232,19 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, onDragS
         )}
       </div>
 
-      {/* Body */}
-      <div style={{ flex: 1, overflow: widget.widget_type === 'card' ? 'hidden' : 'auto', padding: widget.widget_type === 'card' ? 0 : undefined }}>
+      {/* Body — for tables, let PivotTable own its scroll so the sticky
+          totals footer can anchor to the right scroll container. */}
+      <div style={{
+        flex: 1,
+        overflow: 'hidden',
+        minHeight: 0,
+        padding: widget.widget_type === 'card' ? 0 : undefined,
+        display: 'flex',
+      }}>
         {widget.widget_type === 'card' ? (
-          <DashboardCard widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} />
+          <DashboardCard widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
         ) : (
-          <DashboardTableWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} />
+          <DashboardTableWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
         )}
       </div>
 
@@ -472,9 +491,39 @@ function formatRuleAdjustment(rule) {
   return `= ${(adj.value || 0).toLocaleString()}`;
 }
 
-function RuleCard({ rule, onDelete, onEdit }) {
+function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
   const [expanded, setExpanded] = useState(false);
   const filterEntries = Object.entries(rule.filter_expr || {});
+
+  // When the parent sidebar is collapsed, show only name + impact and
+  // suppress the per-card expand affordance.
+  if (!sidebarExpanded) {
+    return (
+      <div style={{
+        background: colors.bgCard, borderRadius: radius.md,
+        border: `1px solid ${colors.border}`,
+        marginBottom: spacing.sm,
+        padding: `${spacing.sm}px ${spacing.md}px`,
+        display: 'flex', alignItems: 'center', gap: spacing.sm,
+      }}>
+        <span style={{
+          flex: 1, fontSize: typography.fontSizes.sm,
+          fontWeight: typography.fontWeights.medium, color: colors.textPrimary,
+          fontFamily: typography.fontFamily,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {rule.name}
+        </span>
+        <span style={{
+          fontSize: typography.fontSizes.sm, fontWeight: typography.fontWeights.bold,
+          color: colors.textPrimary, fontFamily: typography.fontFamily,
+          flexShrink: 0,
+        }}>
+          {formatRuleAdjustment(rule)}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -570,7 +619,7 @@ function RuleCard({ rule, onDelete, onEdit }) {
 // ---------------------------------------------------------------------------
 // Scenario Assumptions Sidebar
 // ---------------------------------------------------------------------------
-function ScenarioSidebar({ modelId, scenarioId, metadata }) {
+function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onToggle }) {
   const { data: scenario } = useScenario(scenarioId);
   const [showRuleForm, setShowRuleForm] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
@@ -592,12 +641,39 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
     setEditingRule(null);
   }, []);
 
+  const header = (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: spacing.sm,
+      margin: `0 0 ${spacing.md}px`,
+    }}>
+      <h3 style={{
+        margin: 0, flex: 1,
+        fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold,
+        color: colors.textPrimary, fontFamily: typography.fontFamily,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+      }}>
+        Scenario Assumptions
+      </h3>
+      {onToggle && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onToggle(); }}
+          title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: colors.textMuted, fontSize: 14, padding: 4,
+            fontFamily: typography.fontFamily,
+          }}
+        >
+          {expanded ? '\u00BB' : '\u00AB'}
+        </button>
+      )}
+    </div>
+  );
+
   if (!scenarioId) {
     return (
       <div style={{ padding: spacing.md }}>
-        <h3 style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
-          Scenario Assumptions
-        </h3>
+        {header}
         <p style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily, margin: 0 }}>
           Select a scenario from the toolbar to view and manage assumptions.
         </p>
@@ -607,12 +683,11 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
 
   return (
     <div style={{ padding: spacing.md, height: '100%', overflowY: 'auto' }}>
-      <h3 style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
-        Scenario Assumptions
-      </h3>
+      {header}
 
-      {/* Add rule button */}
-      {!showRuleForm && !editingRule && (
+      {/* Add rule button — only when sidebar is expanded (no room to show
+          the form in the collapsed state). */}
+      {expanded && !showRuleForm && !editingRule && (
         <div style={{ marginBottom: spacing.md }}>
           <Button variant="primary" size="sm" onClick={() => setShowRuleForm(true)}>
             + Add to scenario
@@ -621,7 +696,7 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
       )}
 
       {/* Rule form — create or edit */}
-      {(showRuleForm || editingRule) && (
+      {expanded && (showRuleForm || editingRule) && (
         <RuleForm
           scenarioId={scenarioId}
           modelId={modelId}
@@ -648,7 +723,13 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
           </p>
         ) : (
           rules.map((rule) => (
-            <RuleCard key={rule.id} rule={rule} onDelete={handleDeleteRule} onEdit={handleEditRule} />
+            <RuleCard
+              key={rule.id}
+              rule={rule}
+              onDelete={handleDeleteRule}
+              onEdit={handleEditRule}
+              sidebarExpanded={expanded}
+            />
           ))
         )}
       </div>
@@ -672,6 +753,7 @@ export default function DashboardView({ dashboardId, modelId }) {
   const [scenarioId, setScenarioId] = useState('');
   const [yearFilter, setYearFilter] = useState('');
   const [localPositions, setLocalPositions] = useState({});
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   // Collect year values from metadata. Looks for a dimension named "year" on any dataset.
   const availableYears = useMemo(() => {
@@ -791,22 +873,21 @@ export default function DashboardView({ dashboardId, modelId }) {
             </div>
           )}
 
-          {/* Scenario selector */}
-          {scenarios.length > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
-              <label style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>Scenario:</label>
-              <select
-                style={{ ...inputStyle, marginBottom: 0, minWidth: 260, padding: '8px 12px', fontSize: typography.fontSizes.sm }}
-                value={scenarioId}
-                onChange={(e) => setScenarioId(e.target.value)}
-              >
-                <option value="">Actuals only</option>
-                {scenarios.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} ({(s.rules || []).length} rules)</option>
-                ))}
-              </select>
-            </div>
-          )}
+          {/* Scenario selector — always visible so users can pick/compare. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+            <label style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>Scenario:</label>
+            <select
+              style={{ ...inputStyle, marginBottom: 0, minWidth: 220, padding: '8px 12px', fontSize: typography.fontSizes.sm }}
+              value={scenarioId}
+              onChange={(e) => setScenarioId(e.target.value)}
+            >
+              <option value="">Actuals only</option>
+              {scenarios.map((s) => (
+                <option key={s.id} value={s.id}>{s.name} ({(s.rules || []).length} rules)</option>
+              ))}
+              {scenarios.length === 0 && <option disabled value="__none__">No scenarios yet</option>}
+            </select>
+          </div>
 
           <Button variant="primary" size="sm" onClick={() => setEditingWidget('new')}>
             + Add Widget
@@ -855,6 +936,7 @@ export default function DashboardView({ dashboardId, modelId }) {
                   widget={w}
                   scenarioId={scenarioId || null}
                   yearFilter={yearFilter || null}
+                  metadata={metadata}
                   onEdit={setEditingWidget}
                   onDelete={handleDelete}
                   onDragStart={handleDragStart}
@@ -866,17 +948,25 @@ export default function DashboardView({ dashboardId, modelId }) {
         </div>
       </div>
 
-      {/* Right sidebar - Scenario Assumptions */}
-      <aside style={{
-        width: 320, flexShrink: 0,
-        borderLeft: `1px solid ${colors.border}`,
-        background: colors.bgCard,
-        overflowY: 'auto',
-      }}>
+      {/* Right sidebar - Scenario Assumptions (collapsible) */}
+      <aside
+        onClick={() => { if (!sidebarExpanded) setSidebarExpanded(true); }}
+        style={{
+          width: sidebarExpanded ? 320 : 220,
+          flexShrink: 0,
+          borderLeft: `1px solid ${colors.border}`,
+          background: colors.bgCard,
+          overflowY: 'auto',
+          cursor: sidebarExpanded ? 'default' : 'pointer',
+          transition: 'width 0.2s ease',
+        }}
+      >
         <ScenarioSidebar
           modelId={modelId}
           scenarioId={scenarioId}
           metadata={metadata}
+          expanded={sidebarExpanded}
+          onToggle={() => setSidebarExpanded((v) => !v)}
         />
       </aside>
 

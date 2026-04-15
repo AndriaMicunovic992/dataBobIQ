@@ -153,11 +153,11 @@ export default function PivotView({ modelId }) {
         )}
 
         {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: spacing.lg }}>
+        <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: spacing.lg }}>
           {pivotConfig.values.length === 0 ? (
             <EmptyState />
           ) : (
-            <div style={{ ...cardStyle, padding: 0, overflow: 'hidden' }}>
+            <div style={{ ...cardStyle, padding: 0, overflow: 'hidden', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
               <PivotTable data={pivotData} loading={isLoading} error={error} />
             </div>
           )}

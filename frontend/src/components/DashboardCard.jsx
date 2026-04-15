@@ -11,14 +11,19 @@ function formatBigNum(val) {
   return Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-export default function DashboardCard({ widget, scenarioId, yearFilter }) {
+export default function DashboardCard({ widget, scenarioId, yearFilter, metadata }) {
   const config = widget.config || {};
 
   const apiConfig = useMemo(() => {
     if (!config.dataset_id || !config.measures?.length) return null;
     const filters = { ...(config.filters || {}) };
+    const joinDims = { ...(config.join_dimensions || {}) };
     if (yearFilter) {
       filters.year = [String(yearFilter)];
+      const yearOwner = metadata?.fieldDatasetMap?.year;
+      if (yearOwner && yearOwner !== config.dataset_id) {
+        joinDims.year = yearOwner;
+      }
     }
     return {
       model_id: config.model_id,
@@ -28,10 +33,10 @@ export default function DashboardCard({ widget, scenarioId, yearFilter }) {
       measures: config.measures,
       filters,
       scenario_ids: scenarioId ? [scenarioId] : [],
-      join_dimensions: config.join_dimensions || undefined,
+      join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
       limit: 1,
     };
-  }, [config, scenarioId, yearFilter]);
+  }, [config, scenarioId, yearFilter, metadata]);
 
   const { data, isLoading, error } = usePivot(apiConfig);
   const missingData = error && /missing its data file|re-upload|missing_parquet/i.test(String(error.message || ''));

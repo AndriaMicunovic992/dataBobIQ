@@ -517,13 +517,11 @@ export default function App() {
         onDeleteDashboard={handleDeleteDashboard}
       />
 
-      {/* Main content */}
+      {/* Main content — chat now floats on top, so no right margin push. */}
       <main
         style={{
           flex: 1,
           marginLeft: 240,
-          marginRight: chatOpen ? 380 : 0,
-          transition: 'margin-right 0.3s ease',
           minHeight: '100vh',
           overflowX: 'hidden',
         }}

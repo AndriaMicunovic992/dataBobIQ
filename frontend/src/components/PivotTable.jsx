@@ -108,7 +108,14 @@ export default function PivotTable({ data, loading, error }) {
   };
 
   return (
-    <div style={{ overflow: 'auto', maxHeight: '100%', position: 'relative' }}>
+    <div style={{
+      flex: 1, minHeight: 0, minWidth: 0,
+      display: 'flex', flexDirection: 'column',
+      width: '100%', position: 'relative',
+    }}>
+      {/* The scroll container owns both the header and body; the totals bar
+          is rendered as a separate sibling below so it is always visible. */}
+      <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
         <thead>
           <tr style={{ background: colors.bgMuted }}>
@@ -187,7 +194,7 @@ export default function PivotTable({ data, loading, error }) {
                       letterSpacing: isLabel ? '0.05em' : 'normal',
                       position: 'sticky',
                       bottom: 0,
-                      zIndex: 2,
+                      zIndex: 3,
                     }}
                   >
                     {isLabel ? 'TOTAL' : formatValue(displayVal, colNames[ci])}
@@ -198,8 +205,15 @@ export default function PivotTable({ data, loading, error }) {
           </tfoot>
         )}
       </table>
+      </div>
       {rowsWithTotals.length > 0 && (
-        <div style={{ padding: `${spacing.xs}px ${spacing.md}px`, borderTop: `1px solid ${colors.border}`, color: colors.textMuted, fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily }}>
+        <div style={{
+          padding: `${spacing.xs}px ${spacing.md}px`,
+          borderTop: `1px solid ${colors.border}`,
+          color: colors.textMuted, fontSize: typography.fontSizes.xs,
+          fontFamily: typography.fontFamily,
+          background: colors.bgCard, flexShrink: 0,
+        }}>
           {data.row_count || rowsWithTotals.length} rows{data.total_row_count > rowsWithTotals.length ? ` of ${data.total_row_count}` : ''}
         </div>
       )}

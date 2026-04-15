@@ -170,6 +170,46 @@ export default function ChatPanel({ modelId, onClose }) {
   const messagesEndRef = useRef(null);
   const stopRef = useRef(null);
 
+  // Floating window position (bottom-right by default) and drag state.
+  const panelWidth = 400;
+  const panelHeight = 560;
+  const [pos, setPos] = useState(() => ({
+    x: Math.max(16, (typeof window !== 'undefined' ? window.innerWidth : 1200) - panelWidth - 32),
+    y: Math.max(16, (typeof window !== 'undefined' ? window.innerHeight : 800) - panelHeight - 32),
+  }));
+  const dragRef = useRef(null); // { startX, startY, origX, origY }
+
+  const handleDragStart = (e) => {
+    // Ignore if the user clicked a button/textarea inside the header.
+    if (e.target.closest('button') || e.target.closest('textarea')) return;
+    e.preventDefault();
+    dragRef.current = {
+      startX: e.clientX, startY: e.clientY,
+      origX: pos.x, origY: pos.y,
+    };
+  };
+
+  useEffect(() => {
+    const handleMove = (e) => {
+      if (!dragRef.current) return;
+      const dx = e.clientX - dragRef.current.startX;
+      const dy = e.clientY - dragRef.current.startY;
+      const maxX = window.innerWidth - panelWidth;
+      const maxY = window.innerHeight - 60;
+      setPos({
+        x: Math.max(0, Math.min(maxX, dragRef.current.origX + dx)),
+        y: Math.max(0, Math.min(maxY, dragRef.current.origY + dy)),
+      });
+    };
+    const handleUp = () => { dragRef.current = null; };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+    };
+  }, []);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -261,19 +301,26 @@ export default function ChatPanel({ modelId, onClose }) {
 
   return (
     <div style={{
-      position: 'fixed', top: 0, right: 0, bottom: 0,
-      width: 380, background: colors.bgCard,
-      borderLeft: `1px solid ${colors.border}`,
-      boxShadow: shadows.xl, zIndex: 200,
+      position: 'fixed',
+      left: pos.x, top: pos.y,
+      width: panelWidth, height: panelHeight,
+      background: colors.bgCard,
+      border: `1px solid ${colors.border}`,
+      borderRadius: radius.lg,
+      boxShadow: shadows.xl, zIndex: 1000,
       display: 'flex', flexDirection: 'column',
+      overflow: 'hidden',
     }}>
-      {/* Header */}
-      <div style={{
-        padding: `${spacing.md}px ${spacing.md}px`,
-        borderBottom: `1px solid ${colors.border}`,
-        display: 'flex', alignItems: 'center', gap: spacing.sm,
-        background: colors.sidebar,
-      }}>
+      {/* Header — draggable handle */}
+      <div
+        onMouseDown={handleDragStart}
+        style={{
+          padding: `${spacing.md}px ${spacing.md}px`,
+          borderBottom: `1px solid ${colors.border}`,
+          display: 'flex', alignItems: 'center', gap: spacing.sm,
+          background: colors.sidebar,
+          cursor: 'grab', userSelect: 'none',
+        }}>
         <div style={{
           width: 32, height: 32, borderRadius: radius.full,
           background: `linear-gradient(135deg, ${colors.primary}, #7c3aed)`,

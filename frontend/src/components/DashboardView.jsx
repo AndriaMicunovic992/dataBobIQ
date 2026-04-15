@@ -20,6 +20,51 @@ const RULE_TYPES = [
 ];
 
 // ---------------------------------------------------------------------------
+// Error state — detects "missing parquet" and shows a re-upload prompt.
+// ---------------------------------------------------------------------------
+export function isMissingDataError(error) {
+  const msg = String(error?.message || '');
+  return /missing its data file|re-upload|missing_parquet/i.test(msg);
+}
+
+function WidgetErrorState({ error }) {
+  if (isMissingDataError(error)) {
+    return (
+      <div style={{
+        padding: spacing.md,
+        margin: spacing.md,
+        background: colors.bgMuted,
+        border: `1px dashed ${colors.border}`,
+        borderRadius: radius.md,
+        fontFamily: typography.fontFamily,
+      }}>
+        <div style={{
+          fontSize: typography.fontSizes.sm,
+          fontWeight: typography.fontWeights.semibold,
+          color: colors.textPrimary,
+          marginBottom: spacing.xs,
+        }}>
+          Dataset unavailable
+        </div>
+        <div style={{
+          fontSize: typography.fontSizes.xs,
+          color: colors.textSecondary,
+          lineHeight: 1.5,
+        }}>
+          The underlying data file is missing and needs to be re-uploaded.
+          Open the Data Model tab to upload the dataset again.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ padding: spacing.md, color: colors.danger, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
+      {error.message}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Single table widget - calls /pivot with saved config
 // ---------------------------------------------------------------------------
 function DashboardTableWidget({ widget, scenarioId, yearFilter }) {
@@ -49,7 +94,7 @@ function DashboardTableWidget({ widget, scenarioId, yearFilter }) {
 
   if (!apiConfig) return <div style={{ padding: spacing.md, color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>Widget not configured.</div>;
   if (isLoading) return <div style={{ padding: spacing.md, color: colors.textMuted, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>Loading...</div>;
-  if (error) return <div style={{ padding: spacing.md, color: colors.danger, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>{error.message}</div>;
+  if (error) return <WidgetErrorState error={error} />;
   if (!data) return null;
 
   return <PivotTable data={data} />;

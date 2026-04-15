@@ -46,6 +46,20 @@ async def run_pivot(
             try:
                 await asyncio.to_thread(register_dataset, ds.id, ds.parquet_path)
                 logger.info("Lazily registered DuckDB view for dataset %s", ds.id)
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "Dataset %s parquet missing; marking as missing_parquet: %s",
+                    ds.id, exc,
+                )
+                ds.status = "missing_parquet"
+                await db.commit()
+                raise HTTPException(
+                    status_code=410,
+                    detail=(
+                        f"Dataset '{ds.name}' is missing its data file and needs to be "
+                        f"re-uploaded. The parquet file at {ds.parquet_path} no longer exists."
+                    ),
+                ) from exc
             except Exception as exc:
                 logger.warning("Failed to register dataset %s: %s", ds.id, exc)
 

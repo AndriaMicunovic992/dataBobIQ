@@ -33,7 +33,8 @@ export default function DashboardCard({ widget, scenarioId, yearFilter }) {
     };
   }, [config, scenarioId, yearFilter]);
 
-  const { data, isLoading } = usePivot(apiConfig);
+  const { data, isLoading, error } = usePivot(apiConfig);
+  const missingData = error && /missing its data file|re-upload|missing_parquet/i.test(String(error.message || ''));
 
   const value = useMemo(() => {
     if (!data?.rows?.length) return null;
@@ -72,6 +73,28 @@ export default function DashboardCard({ widget, scenarioId, yearFilter }) {
         </div>
         {isLoading ? (
           <div style={{ fontSize: typography.fontSizes.lg, color: colors.textMuted, fontFamily: 'monospace' }}>...</div>
+        ) : missingData ? (
+          <div style={{
+            fontSize: typography.fontSizes.xs,
+            color: colors.textSecondary,
+            fontFamily: typography.fontFamily,
+            lineHeight: 1.4,
+          }}>
+            <div style={{ fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, marginBottom: 2 }}>
+              Data missing
+            </div>
+            Re-upload dataset
+          </div>
+        ) : error ? (
+          <div style={{
+            fontSize: typography.fontSizes.xs,
+            color: colors.danger,
+            fontFamily: typography.fontFamily,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+          }}>
+            {error.message}
+          </div>
         ) : (
           <>
             <div style={{

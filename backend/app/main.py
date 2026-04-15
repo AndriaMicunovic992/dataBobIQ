@@ -58,24 +58,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             )
             datasets = result.scalars().all()
             registered_count = 0
+            orphaned_count = 0
             for ds in datasets:
                 if not ds.parquet_path or not Path(ds.parquet_path).exists():
                     logger.warning(
-                        "Skipping dataset %s (%s): parquet file not found at %s",
+                        "Dataset %s (%s): parquet file missing at %s — marking as missing_parquet",
                         ds.id, ds.name, ds.parquet_path,
                     )
+                    ds.status = "missing_parquet"
+                    orphaned_count += 1
                     continue
                 try:
                     register_dataset(ds.id, ds.parquet_path)
                     registered_count += 1
+                except FileNotFoundError:
+                    logger.warning(
+                        "Dataset %s (%s): register_dataset reports file missing — marking as missing_parquet",
+                        ds.id, ds.name,
+                    )
+                    ds.status = "missing_parquet"
+                    orphaned_count += 1
                 except Exception as exc:
                     logger.warning(
                         "Failed to re-register dataset %s (%s): %s",
                         ds.id, ds.parquet_path, exc,
                     )
+            if orphaned_count:
+                await db.commit()
             logger.info(
-                "Re-registered %d/%d active dataset views in DuckDB",
-                registered_count, len(datasets),
+                "Re-registered %d/%d active dataset views in DuckDB (%d orphaned → missing_parquet)",
+                registered_count, len(datasets), orphaned_count,
             )
 
             # Re-register scenario views (parquet paths are deterministic)

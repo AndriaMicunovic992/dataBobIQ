@@ -554,13 +554,6 @@ function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
       ).join('; ')}.`
     : `Applied to ${rule.target_field}.`;
 
-  // First filter summarized as a compact "scope" pill (e.g. "DACH · SaaS")
-  const scopePill = hasFilters
-    ? (Array.isArray(filterEntries[0][1])
-        ? filterEntries[0][1].slice(0, 3).join(' · ')
-        : String(filterEntries[0][1]))
-    : rule.target_field;
-
   return (
     <div style={{
       background: colors.bgCard,
@@ -570,106 +563,91 @@ function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
       marginBottom: spacing.sm,
       boxShadow: shadows.sm,
     }}>
-      {/* Row 1 — type pill + scope pill + Edit/Delete (top-right) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.sm, flexWrap: 'wrap' }}>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center',
-          padding: '3px 10px', borderRadius: radius.full,
-          background: style.bg, color: style.text,
-          border: `1px solid ${style.border}`,
-          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
-          fontWeight: typography.fontWeights.semibold,
-          whiteSpace: 'nowrap',
+      {/* Row 1 — bold rule title + Edit/Delete icons (top-right) */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: spacing.xs, marginBottom: spacing.sm }}>
+        <h4 style={{
+          margin: 0, flex: 1, minWidth: 0,
+          fontSize: typography.fontSizes.md,
+          fontWeight: typography.fontWeights.bold,
+          color: colors.textPrimary,
+          fontFamily: typography.fontFamily,
+          lineHeight: 1.3,
         }}>
-          {style.label}
-        </span>
-        <span style={{
-          display: 'inline-flex', alignItems: 'center',
-          padding: '3px 10px', borderRadius: radius.full,
-          background: colors.bgCard, color: colors.textSecondary,
-          border: `1px solid ${colors.border}`,
-          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
-          fontWeight: typography.fontWeights.medium,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          maxWidth: 140,
-        }}>
-          {scopePill}
-        </span>
-        <div style={{ flex: 1 }} />
+          {rule.name || `${style.label} on ${rule.target_field}`}
+        </h4>
         <button
           onClick={() => onEdit(rule)}
+          title="Edit rule"
+          aria-label="Edit rule"
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
-            color: colors.textSecondary, fontSize: typography.fontSizes.xs,
-            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-            padding: `2px 6px`,
+            color: colors.textSecondary, padding: 2,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
           }}
         >
-          Edit
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+          </svg>
         </button>
         <button
           onClick={() => onDelete(rule.id)}
+          title="Delete rule"
+          aria-label="Delete rule"
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
-            color: colors.danger, fontSize: typography.fontSizes.xs,
-            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-            padding: `2px 6px`,
+            color: colors.danger, padding: 2,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0,
           }}
         >
-          Delete
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
         </button>
       </div>
 
-      {/* Row 2 — bold rule title */}
-      <h4 style={{
-        margin: `0 0 ${spacing.sm}px`,
-        fontSize: typography.fontSizes.md,
-        fontWeight: typography.fontWeights.bold,
-        color: colors.textPrimary,
-        fontFamily: typography.fontFamily,
-        lineHeight: 1.3,
-      }}>
-        {rule.name || `${style.label} on ${rule.target_field}`}
-      </h4>
-
-      {/* Row 3 — IMPACT / NOTE grid */}
+      {/* Row 2 — IMPACT (full width) */}
       <div style={{
-        display: 'grid',
-        gridTemplateColumns: '1fr 1fr',
-        gap: spacing.md,
+        display: 'flex', flexDirection: 'column', gap: 2,
         paddingTop: spacing.sm,
         borderTop: `1px solid ${colors.border}`,
       }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <span style={{
-            fontSize: 10, color: colors.textMuted,
-            textTransform: 'uppercase', letterSpacing: '0.08em',
-            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-          }}>
-            Impact
-          </span>
-          <span style={{
-            fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm,
-            fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
-          }}>
-            {impactText}
-          </span>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
-          <span style={{
-            fontSize: 10, color: colors.textMuted,
-            textTransform: 'uppercase', letterSpacing: '0.08em',
-            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-          }}>
-            Note
-          </span>
-          <span style={{
-            fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
-            color: colors.textSecondary, lineHeight: 1.4,
-          }}>
-            {noteText}
-          </span>
-        </div>
+        <span style={{
+          fontSize: 10, color: colors.textMuted,
+          textTransform: 'uppercase', letterSpacing: '0.08em',
+          fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+        }}>
+          Impact
+        </span>
+        <span style={{
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm,
+          fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
+        }}>
+          {impactText}
+        </span>
+      </div>
+
+      {/* Row 3 — NOTE (full width) */}
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 2,
+        marginTop: spacing.sm,
+      }}>
+        <span style={{
+          fontSize: 10, color: colors.textMuted,
+          textTransform: 'uppercase', letterSpacing: '0.08em',
+          fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+        }}>
+          Note
+        </span>
+        <span style={{
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          color: colors.textSecondary, lineHeight: 1.4,
+        }}>
+          {noteText}
+        </span>
       </div>
     </div>
   );

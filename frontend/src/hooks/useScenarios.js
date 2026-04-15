@@ -5,6 +5,7 @@ import {
   createScenario,
   deleteScenario,
   addRule,
+  updateRule,
   deleteRule,
   recompute,
   getVariance,
@@ -47,6 +48,17 @@ export function useAddRule(scenarioId, modelId) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (rule) => addRule(scenarioId, rule),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scenario', scenarioId] });
+      if (modelId) qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
+    },
+  });
+}
+
+export function useUpdateRule(scenarioId, modelId) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ruleId, data }) => updateRule(scenarioId, ruleId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scenario', scenarioId] });
       if (modelId) qc.invalidateQueries({ queryKey: ['scenarios', modelId] });

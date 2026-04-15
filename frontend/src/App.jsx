@@ -12,10 +12,22 @@ import DashboardView from './components/DashboardView.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
 import KnowledgePanel from './components/KnowledgePanel.jsx';
 
-const TABS = [
-  { id: 'schema', label: 'Data Model', icon: '\u2B21' },
-  { id: 'knowledge', label: 'Knowledge', icon: '\u25C7' },
-];
+const SCHEMA_TAB = { id: 'schema', label: 'Data Model', icon: '\u2B21' };
+const KNOWLEDGE_TAB = { id: 'knowledge', label: 'Knowledge', icon: '\u25C7' };
+
+function SectionHeader({ label }) {
+  return (
+    <div style={{ margin: `${spacing.md}px 0 ${spacing.xs}px`, padding: `${spacing.xs}px ${spacing.sm}px` }}>
+      <span style={{
+        color: colors.sidebarText, fontSize: typography.fontSizes.xs,
+        fontWeight: typography.fontWeights.medium, textTransform: 'uppercase',
+        letterSpacing: '0.08em', fontFamily: typography.fontFamily,
+      }}>
+        {label}
+      </span>
+    </div>
+  );
+}
 
 function CreateModelModal({ onClose, onCreated }) {
   const [name, setName] = useState('');
@@ -159,7 +171,7 @@ function CreateDashboardModal({ modelId, onClose, onCreated }) {
   );
 }
 
-function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, chatOpen, onToggleChat, dashboards, onCreateDashboard, onDeleteDashboard }) {
+function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, dashboards, onCreateDashboard, onDeleteDashboard }) {
   const selectedModel = models?.find((m) => m.id === selectedModelId);
 
   return (
@@ -247,31 +259,8 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
       {/* Navigation tabs */}
       {selectedModelId && (
         <nav style={{ padding: `${spacing.sm}px ${spacing.sm}px`, flex: 1 }}>
-          {/* Views section */}
-          <div style={{ marginBottom: spacing.xs, padding: `${spacing.xs}px ${spacing.sm}px` }}>
-            <span style={{ color: colors.sidebarText, fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: typography.fontFamily }}>
-              Views
-            </span>
-          </div>
-          {TABS.map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <NavItem
-                key={tab.id}
-                icon={tab.icon}
-                label={tab.label}
-                active={isActive}
-                onClick={() => onTabChange(tab.id)}
-              />
-            );
-          })}
-
-          {/* Dashboards section */}
-          <div style={{ margin: `${spacing.md}px 0 ${spacing.xs}px`, padding: `${spacing.xs}px ${spacing.sm}px` }}>
-            <span style={{ color: colors.sidebarText, fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium, textTransform: 'uppercase', letterSpacing: '0.08em', fontFamily: typography.fontFamily }}>
-              Dashboards
-            </span>
-          </div>
+          {/* Dashboards section — first */}
+          <SectionHeader label="Dashboards" />
           {(dashboards || []).map((dash) => {
             const dashTabId = `dashboard-${dash.id}`;
             const isActive = activeTab === dashTabId;
@@ -319,6 +308,24 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
             New Dashboard
           </button>
 
+          {/* Data Model section — independent category */}
+          <SectionHeader label="Data Model" />
+          <NavItem
+            icon={SCHEMA_TAB.icon}
+            label={SCHEMA_TAB.label}
+            active={activeTab === SCHEMA_TAB.id}
+            onClick={() => onTabChange(SCHEMA_TAB.id)}
+          />
+
+          {/* Knowledge section — independent category */}
+          <SectionHeader label="Knowledge" />
+          <NavItem
+            icon={KNOWLEDGE_TAB.icon}
+            label={KNOWLEDGE_TAB.label}
+            active={activeTab === KNOWLEDGE_TAB.id}
+            onClick={() => onTabChange(KNOWLEDGE_TAB.id)}
+          />
+
           {/* Divider */}
           <div style={{ margin: `${spacing.md}px 0`, borderTop: `1px solid rgba(255,255,255,0.06)` }} />
 
@@ -338,14 +345,6 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
           >
             {'\u2191'} Upload Dataset
           </button>
-
-          {/* Chat toggle */}
-          <NavItem
-            icon={'\u25CE'}
-            label={chatOpen ? 'Close Chat' : 'AI Chat'}
-            active={chatOpen}
-            onClick={onToggleChat}
-          />
         </nav>
       )}
 
@@ -513,8 +512,6 @@ export default function App() {
         onTabChange={setActiveTab}
         onCreateModel={() => setShowCreateModal(true)}
         onUpload={() => setShowUploadModal(true)}
-        chatOpen={chatOpen}
-        onToggleChat={() => setChatOpen((v) => !v)}
         dashboards={dashboards}
         onCreateDashboard={() => setShowCreateDashboardModal(true)}
         onDeleteDashboard={handleDeleteDashboard}
@@ -537,6 +534,38 @@ export default function App() {
       {/* Chat panel */}
       {chatOpen && selectedModelId && (
         <ChatPanel modelId={selectedModelId} onClose={() => setChatOpen(false)} />
+      )}
+
+      {/* Floating chat FAB — bottom-right, only when a model is selected and chat closed */}
+      {selectedModelId && !chatOpen && (
+        <button
+          onClick={() => setChatOpen(true)}
+          title="Open AI Chat"
+          style={{
+            position: 'fixed',
+            bottom: spacing.xl,
+            right: spacing.xl,
+            width: 56,
+            height: 56,
+            borderRadius: '50%',
+            background: `linear-gradient(135deg, ${colors.primary}, #7c3aed)`,
+            border: 'none',
+            boxShadow: shadows.xl,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'white',
+            fontSize: 24,
+            fontFamily: typography.fontFamily,
+            zIndex: 500,
+            transition: transitions.fast,
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.08)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+        >
+          {'\u{1F4AC}'}
+        </button>
       )}
 
       {/* Modals */}

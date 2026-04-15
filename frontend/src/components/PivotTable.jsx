@@ -108,10 +108,10 @@ export default function PivotTable({ data, loading, error }) {
   };
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
+    <div style={{ overflow: 'auto', maxHeight: '100%', position: 'relative' }}>
+      <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
         <thead>
-          <tr style={{ background: colors.bgMuted, borderBottom: `2px solid ${colors.border}` }}>
+          <tr style={{ background: colors.bgMuted }}>
             {colNames.map((name, i) => {
               const numeric = isNumericCol(i);
               return (
@@ -129,7 +129,12 @@ export default function PivotTable({ data, loading, error }) {
                     whiteSpace: 'nowrap',
                     cursor: 'pointer',
                     userSelect: 'none',
+                    background: colors.bgMuted,
+                    borderBottom: `2px solid ${colors.border}`,
                     borderRight: i < colNames.length - 1 ? `1px solid ${colors.border}` : 'none',
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 2,
                     transition: 'color 0.1s',
                   }}
                 >
@@ -155,33 +160,43 @@ export default function PivotTable({ data, loading, error }) {
               <DataRow key={ri} row={row} colNames={colNames} colDefs={allColDefs} isNumericCol={isNumericCol} isLast={ri === sortedRows.length - 1 && !totalsWithTotal} />
             ))
           )}
-          {totalsWithTotal && (
-            <tr style={{ background: '#f0f9ff', borderTop: `2px solid ${colors.border}` }}>
+        </tbody>
+        {totalsWithTotal && (
+          <tfoot>
+            <tr>
               {totalsWithTotal.map((val, ci) => {
                 const numeric = typeof val === 'number';
-                // Show "Total" in the first dimension column (where ROLLUP puts NULL)
-                const displayVal = ci === 0 && (val === null || val === undefined) ? 'Total' : val;
-                const isLabel = ci === 0 && displayVal === 'Total';
+                // Show "TOTAL" in the first dimension column (where ROLLUP puts NULL)
+                const displayVal = ci === 0 && (val === null || val === undefined) ? 'TOTAL' : val;
+                const isLabel = ci === 0 && displayVal === 'TOTAL';
                 return (
                   <td
                     key={ci}
                     style={{
-                      padding: `${spacing.sm}px ${spacing.md}px`,
+                      padding: `${spacing.md}px ${spacing.md}px`,
                       textAlign: isLabel ? 'left' : numeric ? 'right' : 'left',
                       fontWeight: typography.fontWeights.bold,
-                      color: colors.primary,
+                      color: colors.textPrimary,
+                      background: colors.bgMuted,
+                      borderTop: `3px solid ${colors.textPrimary}`,
+                      borderBottom: `2px solid ${colors.textPrimary}`,
                       borderRight: ci < colNames.length - 1 ? `1px solid ${colors.border}` : 'none',
                       fontFamily: isLabel ? typography.fontFamily : 'monospace',
                       fontSize: typography.fontSizes.sm,
+                      textTransform: isLabel ? 'uppercase' : 'none',
+                      letterSpacing: isLabel ? '0.05em' : 'normal',
+                      position: 'sticky',
+                      bottom: 0,
+                      zIndex: 2,
                     }}
                   >
-                    {isLabel ? 'Total' : formatValue(displayVal, colNames[ci])}
+                    {isLabel ? 'TOTAL' : formatValue(displayVal, colNames[ci])}
                   </td>
                 );
               })}
             </tr>
-          )}
-        </tbody>
+          </tfoot>
+        )}
       </table>
       {rowsWithTotals.length > 0 && (
         <div style={{ padding: `${spacing.xs}px ${spacing.md}px`, borderTop: `1px solid ${colors.border}`, color: colors.textMuted, fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily }}>

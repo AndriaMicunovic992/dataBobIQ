@@ -61,6 +61,8 @@ export const getScenario = (id) => req(`/scenarios/${id}`);
 export const deleteScenario = (id) => req(`/scenarios/${id}`, { method: 'DELETE' });
 export const addRule = (scenarioId, rule) =>
   req(`/scenarios/${scenarioId}/rules`, json(rule));
+export const updateRule = (scenarioId, ruleId, data) =>
+  req(`/scenarios/${scenarioId}/rules/${ruleId}`, { ...json(data), method: 'PUT' });
 export const deleteRule = (scenarioId, ruleId) =>
   req(`/scenarios/${scenarioId}/rules/${ruleId}`, { method: 'DELETE' });
 export const recompute = (id) => req(`/scenarios/${id}/recompute`, { method: 'POST' });

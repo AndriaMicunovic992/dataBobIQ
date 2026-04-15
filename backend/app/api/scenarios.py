@@ -18,6 +18,7 @@ from app.schemas.scenarios import (
     ScenarioResponse,
     ScenarioRuleCreate,
     ScenarioRuleResponse,
+    ScenarioRuleUpdate,
     ScenarioUpdate,
 )
 from app.services.scenario_engine import (
@@ -240,6 +241,46 @@ async def add_rule(
         logger.info("Recompute after add_rule: scenario %s, affected=%d, rules=%d", scenario_id, affected, len(scenario.rules))
     except Exception as exc:
         logger.exception("Recompute after add_rule failed for scenario %s: %s", scenario_id, exc)
+
+    return ScenarioRuleResponse.model_validate(rule)
+
+
+@router.put(
+    "/scenarios/{scenario_id}/rules/{rule_id}",
+    response_model=ScenarioRuleResponse,
+)
+async def update_rule(
+    scenario_id: str,
+    rule_id: str,
+    body: ScenarioRuleUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> ScenarioRuleResponse:
+    """Update a rule's fields and trigger recompute."""
+    result = await db.execute(
+        select(ScenarioRule).where(
+            ScenarioRule.id == rule_id, ScenarioRule.scenario_id == scenario_id
+        )
+    )
+    rule = result.scalar_one_or_none()
+    if rule is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Rule {rule_id} not found in scenario {scenario_id}",
+        )
+
+    update_data = body.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(rule, field, value)
+
+    await db.commit()
+    await db.refresh(rule)
+    logger.info("Updated rule id=%s in scenario id=%s", rule_id, scenario_id)
+
+    scenario = await _get_scenario_or_404(scenario_id, db)
+    try:
+        await _recompute_from_db(scenario, db)
+    except Exception as exc:
+        logger.warning("Recompute after update_rule failed for scenario %s: %s", scenario_id, exc)
 
     return ScenarioRuleResponse.model_validate(rule)
 

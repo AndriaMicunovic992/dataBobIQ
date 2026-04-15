@@ -1,11 +1,10 @@
 import { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import { useDashboard, useCreateWidget, useUpdateWidget, useDeleteWidget, useSaveLayout } from '../hooks/useDashboard.js';
-import { useScenarios, useScenario, useAddRule, useDeleteRule } from '../hooks/useScenarios.js';
+import { useScenarios, useScenario, useAddRule, useUpdateRule, useDeleteRule } from '../hooks/useScenarios.js';
 import { useMetadata } from '../hooks/useMetadata.js';
 import { usePivot } from '../hooks/usePivot.js';
 import { colors, spacing, radius, typography, shadows, cardStyle, inputStyle, labelStyle, transitions } from '../theme.js';
 import { Button } from './common/Button.jsx';
-import { Badge } from './common/Badge.jsx';
 import PivotTable from './PivotTable.jsx';
 import DashboardCard from './DashboardCard.jsx';
 import WidgetConfigModal from './WidgetConfigModal.jsx';
@@ -20,68 +19,31 @@ const RULE_TYPES = [
   { value: 'set_value', label: 'Set Value (=)', desc: 'Override to exact value' },
 ];
 
-const RULE_TYPE_COLORS = {
-  multiplier: { bg: '#dbeafe', text: '#1e40af', label: 'Revenue uplift' },
-  offset: { bg: '#d1fae5', text: '#065f46', label: 'Cost reduction' },
-  set_value: { bg: '#fef3c7', text: '#92400e', label: 'Set value' },
-};
-
-// ---------------------------------------------------------------------------
-// KPI Summary Card
-// ---------------------------------------------------------------------------
-function KPISummaryCard({ label, value, sublabel }) {
-  return (
-    <div style={{
-      background: colors.bgCard, borderRadius: radius.md,
-      border: `1px solid ${colors.border}`, padding: `${spacing.sm}px ${spacing.md}px`,
-      minWidth: 160, flex: '1 1 160px',
-    }}>
-      <div style={{
-        fontSize: typography.fontSizes.xs, color: colors.textMuted,
-        fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-        textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2,
-      }}>
-        {label}
-      </div>
-      <div style={{
-        fontSize: typography.fontSizes.xl, fontWeight: typography.fontWeights.bold,
-        color: colors.textPrimary, fontFamily: typography.fontFamily,
-      }}>
-        {value}
-      </div>
-      {sublabel && (
-        <div style={{
-          fontSize: typography.fontSizes.xs, color: colors.textMuted,
-          fontFamily: typography.fontFamily, marginTop: 2,
-        }}>
-          {sublabel}
-        </div>
-      )}
-    </div>
-  );
-}
-
 // ---------------------------------------------------------------------------
 // Single table widget - calls /pivot with saved config
 // ---------------------------------------------------------------------------
-function DashboardTableWidget({ widget, scenarioId }) {
+function DashboardTableWidget({ widget, scenarioId, yearFilter }) {
   const config = widget.config || {};
 
   const apiConfig = useMemo(() => {
     if (!config.dataset_id || !config.measures?.length) return null;
+    const filters = { ...(config.filters || {}) };
+    if (yearFilter) {
+      filters.year = [String(yearFilter)];
+    }
     return {
       model_id: config.model_id,
       dataset_id: config.dataset_id,
       row_dimensions: config.row_dimensions || [],
       column_dimension: config.column_dimension || null,
       measures: config.measures,
-      filters: config.filters || {},
+      filters,
       scenario_ids: scenarioId ? [scenarioId] : [],
       join_dimensions: config.join_dimensions || undefined,
       include_totals: true,
       limit: config.limit || 500,
     };
-  }, [config, scenarioId]);
+  }, [config, scenarioId, yearFilter]);
 
   const { data, isLoading, error } = usePivot(apiConfig);
 
@@ -162,7 +124,7 @@ function useGridInteraction(widgets, onLayoutChange) {
 // ---------------------------------------------------------------------------
 // Widget wrapper with drag header + resize handle
 // ---------------------------------------------------------------------------
-function WidgetFrame({ widget, onEdit, onDelete, scenarioId, onDragStart, onResizeStart }) {
+function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, onDragStart, onResizeStart }) {
   const [hovered, setHovered] = useState(false);
   const pos = widget.position || {};
   const col = pos.col || 1;
@@ -205,7 +167,6 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, onDragStart, onResi
         }}>
           {widget.name}
         </span>
-        <Badge variant="muted">{widget.widget_type}</Badge>
         {hovered && (
           <>
             <button onClick={() => onEdit(widget)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textMuted, fontSize: 12, fontFamily: typography.fontFamily }}>Edit</button>
@@ -217,9 +178,9 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, onDragStart, onResi
       {/* Body */}
       <div style={{ flex: 1, overflow: widget.widget_type === 'card' ? 'hidden' : 'auto', padding: widget.widget_type === 'card' ? 0 : undefined }}>
         {widget.widget_type === 'card' ? (
-          <DashboardCard widget={widget} scenarioId={scenarioId} />
+          <DashboardCard widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} />
         ) : (
-          <DashboardTableWidget widget={widget} scenarioId={scenarioId} />
+          <DashboardTableWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} />
         )}
       </div>
 
@@ -242,15 +203,35 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, onDragStart, onResi
 // ---------------------------------------------------------------------------
 // Scenario Sidebar - Rule Form
 // ---------------------------------------------------------------------------
-function RuleForm({ scenarioId, modelId, metadata, onClose }) {
-  const [name, setName] = useState('');
-  const [ruleType, setRuleType] = useState('multiplier');
-  const [targetField, setTargetField] = useState('');
-  const [value, setValue] = useState('');
-  const [periodFrom, setPeriodFrom] = useState('');
-  const [periodTo, setPeriodTo] = useState('');
-  const [filters, setFilters] = useState([]);
-  const mut = useAddRule(scenarioId, modelId);
+function RuleForm({ scenarioId, modelId, metadata, onClose, editRule }) {
+  const isEdit = !!editRule;
+
+  const initialAdjustmentValue = (() => {
+    if (!editRule) return '';
+    const adj = editRule.adjustment || {};
+    if (editRule.rule_type === 'multiplier') return String(adj.factor ?? '');
+    if (editRule.rule_type === 'offset') return String(adj.offset ?? '');
+    return String(adj.value ?? '');
+  })();
+
+  const initialFilters = (() => {
+    if (!editRule?.filter_expr) return [];
+    return Object.entries(editRule.filter_expr).map(([column, values]) => ({
+      column,
+      values: (values || []).map((v) => String(v)),
+    }));
+  })();
+
+  const [name, setName] = useState(editRule?.name || '');
+  const [ruleType, setRuleType] = useState(editRule?.rule_type || 'multiplier');
+  const [targetField, setTargetField] = useState(editRule?.target_field || '');
+  const [value, setValue] = useState(initialAdjustmentValue);
+  const [periodFrom, setPeriodFrom] = useState(editRule?.period_from || '');
+  const [periodTo, setPeriodTo] = useState(editRule?.period_to || '');
+  const [filters, setFilters] = useState(initialFilters);
+  const addMut = useAddRule(scenarioId, modelId);
+  const updateMut = useUpdateRule(scenarioId, modelId);
+  const mut = isEdit ? updateMut : addMut;
 
   const measures = useMemo(() => {
     const result = [];
@@ -328,18 +309,22 @@ function RuleForm({ scenarioId, modelId, metadata, onClose }) {
       rule_type: ruleType,
       target_field: targetField,
       adjustment,
-      filter_expr: Object.keys(filter_expr).length > 0 ? filter_expr : undefined,
-      period_from: periodFrom || undefined,
-      period_to: periodTo || undefined,
+      filter_expr: Object.keys(filter_expr).length > 0 ? filter_expr : null,
+      period_from: periodFrom || null,
+      period_to: periodTo || null,
     };
 
-    mut.mutate(rule, { onSuccess: onClose });
+    if (isEdit) {
+      updateMut.mutate({ ruleId: editRule.id, data: rule }, { onSuccess: onClose });
+    } else {
+      addMut.mutate(rule, { onSuccess: onClose });
+    }
   };
 
   return (
     <div style={{ background: colors.bgMuted, borderRadius: radius.md, border: `1px solid ${colors.border}`, padding: spacing.md, marginBottom: spacing.md }}>
       <h4 style={{ margin: `0 0 ${spacing.sm}px`, fontSize: typography.fontSizes.sm, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
-        Add Rule
+        {isEdit ? 'Edit Rule' : 'Add Rule'}
       </h4>
 
       <div style={{ marginBottom: spacing.sm }}>
@@ -419,7 +404,7 @@ function RuleForm({ scenarioId, modelId, metadata, onClose }) {
 
       <div style={{ display: 'flex', gap: spacing.sm, justifyContent: 'flex-end' }}>
         <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" size="sm" loading={mut.isPending} disabled={!targetField || !value} onClick={handleSubmit}>Add Rule</Button>
+        <Button variant="primary" size="sm" loading={mut.isPending} disabled={!targetField || !value} onClick={handleSubmit}>{isEdit ? 'Save Changes' : 'Add Rule'}</Button>
       </div>
     </div>
   );
@@ -428,86 +413,111 @@ function RuleForm({ scenarioId, modelId, metadata, onClose }) {
 // ---------------------------------------------------------------------------
 // Scenario Sidebar - Rule display card
 // ---------------------------------------------------------------------------
-function RuleCard({ rule, onDelete }) {
-  const ruleStyle = RULE_TYPE_COLORS[rule.rule_type] || RULE_TYPE_COLORS.multiplier;
-  const filterEntries = Object.entries(rule.filter_expr || {});
+function formatRuleAdjustment(rule) {
+  const adj = rule.adjustment || {};
+  if (rule.rule_type === 'multiplier') {
+    const factor = adj.factor || 1;
+    const pct = ((factor - 1) * 100).toFixed(1);
+    return `${pct >= 0 ? '+' : ''}${pct}%`;
+  }
+  if (rule.rule_type === 'offset') {
+    const offset = adj.offset || 0;
+    return `${offset >= 0 ? '+' : ''}${offset.toLocaleString()}`;
+  }
+  return `= ${(adj.value || 0).toLocaleString()}`;
+}
 
-  const formatAdjustment = (rule) => {
-    const adj = rule.adjustment || {};
-    if (rule.rule_type === 'multiplier') {
-      const factor = adj.factor || 1;
-      const pct = ((factor - 1) * 100).toFixed(1);
-      return `${pct >= 0 ? '+' : ''}${pct}%`;
-    }
-    if (rule.rule_type === 'offset') {
-      const offset = adj.offset || 0;
-      return `${offset >= 0 ? '+' : ''}${offset.toLocaleString()}`;
-    }
-    return `= ${(adj.value || 0).toLocaleString()}`;
-  };
+function RuleCard({ rule, onDelete, onEdit }) {
+  const [expanded, setExpanded] = useState(false);
+  const filterEntries = Object.entries(rule.filter_expr || {});
 
   return (
     <div style={{
       background: colors.bgCard, borderRadius: radius.md,
-      border: `1px solid ${colors.border}`, padding: spacing.md,
+      border: `1px solid ${colors.border}`,
       marginBottom: spacing.sm,
+      overflow: 'hidden',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs }}>
+      {/* Collapsed header — always visible */}
+      <div
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          padding: `${spacing.sm}px ${spacing.md}px`,
+          display: 'flex', alignItems: 'center', gap: spacing.sm,
+          cursor: 'pointer', userSelect: 'none',
+        }}
+      >
         <span style={{
-          fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.semibold,
-          padding: '2px 8px', borderRadius: radius.full,
-          background: ruleStyle.bg, color: ruleStyle.text,
+          fontSize: 10, color: colors.textMuted, width: 10,
+          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+          transition: transitions.fast,
+        }}>&#x25B6;</span>
+        <span style={{
+          flex: 1, fontSize: typography.fontSizes.sm,
+          fontWeight: typography.fontWeights.medium, color: colors.textPrimary,
           fontFamily: typography.fontFamily,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
-          {ruleStyle.label}
+          {rule.name}
         </span>
-        <span style={{ flex: 1 }} />
-        <button onClick={() => onDelete(rule.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.textMuted, fontSize: 12 }}>x</button>
-      </div>
-
-      {/* Filter chips */}
-      {filterEntries.length > 0 && (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: spacing.xs }}>
-          {filterEntries.map(([col, vals]) => (
-            <span key={col} style={{
-              fontSize: typography.fontSizes.xs, padding: '1px 6px',
-              borderRadius: radius.full, background: colors.bgMuted,
-              color: colors.textSecondary, fontFamily: typography.fontFamily,
-              border: `1px solid ${colors.border}`,
-            }}>
-              {vals.join(' / ')}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <div style={{
-        fontSize: typography.fontSizes.sm, color: colors.textPrimary,
-        fontFamily: typography.fontFamily, marginBottom: spacing.xs,
-      }}>
-        {rule.name}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
         <span style={{
           fontSize: typography.fontSizes.sm, fontWeight: typography.fontWeights.bold,
           color: colors.textPrimary, fontFamily: typography.fontFamily,
+          flexShrink: 0,
         }}>
-          IMPACT: {formatAdjustment(rule)}
+          {formatRuleAdjustment(rule)}
         </span>
-        {rule.period_from && (
-          <span style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily }}>
-            {rule.period_from}{rule.period_to ? ` to ${rule.period_to}` : '+'}
-          </span>
-        )}
       </div>
 
-      <div style={{
-        fontSize: typography.fontSizes.xs, color: colors.textMuted,
-        fontFamily: typography.fontFamily, marginTop: spacing.xs,
-      }}>
-        Target: {rule.target_field}
-      </div>
+      {/* Expanded details */}
+      {expanded && (
+        <div style={{
+          padding: `0 ${spacing.md}px ${spacing.md}px`,
+          borderTop: `1px solid ${colors.border}`,
+          paddingTop: spacing.sm,
+        }}>
+          <div style={{
+            fontSize: typography.fontSizes.xs, color: colors.textMuted,
+            fontFamily: typography.fontFamily, marginBottom: spacing.xs,
+            textTransform: 'uppercase', letterSpacing: '0.05em',
+          }}>
+            IMPACT: {formatRuleAdjustment(rule)}
+          </div>
+
+          {filterEntries.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: spacing.xs }}>
+              {filterEntries.map(([col, vals]) => (
+                <span key={col} style={{
+                  fontSize: typography.fontSizes.xs, padding: '1px 6px',
+                  borderRadius: radius.full, background: colors.bgMuted,
+                  color: colors.textSecondary, fontFamily: typography.fontFamily,
+                  border: `1px solid ${colors.border}`,
+                }}>
+                  {col}: {vals.join(' / ')}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <div style={{
+            fontSize: typography.fontSizes.xs, color: colors.textMuted,
+            fontFamily: typography.fontFamily, marginBottom: spacing.xs,
+          }}>
+            Target: {rule.target_field}
+          </div>
+
+          {rule.period_from && (
+            <div style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily, marginBottom: spacing.xs }}>
+              Period: {rule.period_from}{rule.period_to ? ` to ${rule.period_to}` : '+'}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: spacing.xs, marginTop: spacing.sm, justifyContent: 'flex-end' }}>
+            <Button variant="secondary" size="sm" onClick={() => onEdit(rule)}>Edit</Button>
+            <Button variant="secondary" size="sm" onClick={() => onDelete(rule.id)}>Delete</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -518,7 +528,7 @@ function RuleCard({ rule, onDelete }) {
 function ScenarioSidebar({ modelId, scenarioId, metadata }) {
   const { data: scenario } = useScenario(scenarioId);
   const [showRuleForm, setShowRuleForm] = useState(false);
-  const [assumptionText, setAssumptionText] = useState('');
+  const [editingRule, setEditingRule] = useState(null);
   const deleteRuleMut = useDeleteRule(scenarioId, modelId);
 
   const rules = scenario?.rules || [];
@@ -526,6 +536,16 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
   const handleDeleteRule = useCallback((ruleId) => {
     deleteRuleMut.mutate(ruleId);
   }, [deleteRuleMut]);
+
+  const handleEditRule = useCallback((rule) => {
+    setEditingRule(rule);
+    setShowRuleForm(false);
+  }, []);
+
+  const closeForms = useCallback(() => {
+    setShowRuleForm(false);
+    setEditingRule(null);
+  }, []);
 
   if (!scenarioId) {
     return (
@@ -546,31 +566,23 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
         Scenario Assumptions
       </h3>
 
-      {/* Add assumption input */}
-      <div style={{ marginBottom: spacing.md }}>
-        <input
-          style={{ ...inputStyle, marginBottom: spacing.sm }}
-          placeholder="Add an assumption..."
-          value={assumptionText}
-          onChange={(e) => setAssumptionText(e.target.value)}
-        />
-        <div style={{ display: 'flex', gap: spacing.sm }}>
+      {/* Add rule button */}
+      {!showRuleForm && !editingRule && (
+        <div style={{ marginBottom: spacing.md }}>
           <Button variant="primary" size="sm" onClick={() => setShowRuleForm(true)}>
             + Add to scenario
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => {}}>
-            Suggest AI
-          </Button>
         </div>
-      </div>
+      )}
 
-      {/* Rule form */}
-      {showRuleForm && (
+      {/* Rule form — create or edit */}
+      {(showRuleForm || editingRule) && (
         <RuleForm
           scenarioId={scenarioId}
           modelId={modelId}
           metadata={metadata}
-          onClose={() => setShowRuleForm(false)}
+          editRule={editingRule}
+          onClose={closeForms}
         />
       )}
 
@@ -591,7 +603,7 @@ function ScenarioSidebar({ modelId, scenarioId, metadata }) {
           </p>
         ) : (
           rules.map((rule) => (
-            <RuleCard key={rule.id} rule={rule} onDelete={handleDeleteRule} />
+            <RuleCard key={rule.id} rule={rule} onDelete={handleDeleteRule} onEdit={handleEditRule} />
           ))
         )}
       </div>
@@ -613,7 +625,22 @@ export default function DashboardView({ dashboardId, modelId }) {
 
   const [editingWidget, setEditingWidget] = useState(null);
   const [scenarioId, setScenarioId] = useState('');
+  const [yearFilter, setYearFilter] = useState('');
   const [localPositions, setLocalPositions] = useState({});
+
+  // Collect year values from metadata. Looks for a dimension named "year" on any dataset.
+  const availableYears = useMemo(() => {
+    const seen = new Set();
+    for (const ds of metadata?.datasets || []) {
+      for (const d of ds.dimensions || []) {
+        const field = (d.field || '').toLowerCase();
+        if (field === 'year' && Array.isArray(d.values)) {
+          for (const v of d.values) seen.add(String(v));
+        }
+      }
+    }
+    return Array.from(seen).sort();
+  }, [metadata]);
 
   const widgets = useMemo(() => {
     const raw = dashboard?.widgets || [];
@@ -682,19 +709,6 @@ export default function DashboardView({ dashboardId, modelId }) {
     deleteMut.mutate(id);
   }, [deleteMut]);
 
-  const selectedScenario = scenarios.find((s) => s.id === scenarioId);
-
-  // KPI summary values - computed from first widget data or scenario
-  const kpiItems = useMemo(() => {
-    const items = [];
-    if (selectedScenario) {
-      items.push({ label: 'SCENARIO', value: selectedScenario.name });
-    } else {
-      items.push({ label: 'SCENARIO', value: 'Base Case' });
-    }
-    return items;
-  }, [selectedScenario]);
-
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {/* Main content area */}
@@ -715,12 +729,29 @@ export default function DashboardView({ dashboardId, modelId }) {
           </h2>
           <div style={{ flex: 1 }} />
 
+          {/* Year filter (applies to all widgets) */}
+          {availableYears.length > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+              <label style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>Year:</label>
+              <select
+                style={{ ...inputStyle, marginBottom: 0, minWidth: 120, padding: '8px 12px', fontSize: typography.fontSizes.sm }}
+                value={yearFilter}
+                onChange={(e) => setYearFilter(e.target.value)}
+              >
+                <option value="">All years</option>
+                {availableYears.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           {/* Scenario selector */}
           {scenarios.length > 0 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
-              <label style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily }}>Scenario:</label>
+              <label style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>Scenario:</label>
               <select
-                style={{ ...inputStyle, marginBottom: 0, minWidth: 160, padding: '4px 8px', fontSize: typography.fontSizes.xs }}
+                style={{ ...inputStyle, marginBottom: 0, minWidth: 260, padding: '8px 12px', fontSize: typography.fontSizes.sm }}
                 value={scenarioId}
                 onChange={(e) => setScenarioId(e.target.value)}
               >
@@ -735,18 +766,6 @@ export default function DashboardView({ dashboardId, modelId }) {
           <Button variant="primary" size="sm" onClick={() => setEditingWidget('new')}>
             + Add Widget
           </Button>
-        </div>
-
-        {/* KPI Summary Bar */}
-        <div style={{
-          padding: `${spacing.sm}px ${spacing.xl}px`,
-          display: 'flex', gap: spacing.md, flexWrap: 'wrap',
-          borderBottom: `1px solid ${colors.border}`,
-          background: colors.bgMuted,
-        }}>
-          {kpiItems.map((item, i) => (
-            <KPISummaryCard key={i} label={item.label} value={item.value} sublabel={item.sublabel} />
-          ))}
         </div>
 
         {/* Widget grid area */}
@@ -790,6 +809,7 @@ export default function DashboardView({ dashboardId, modelId }) {
                   key={w.id}
                   widget={w}
                   scenarioId={scenarioId || null}
+                  yearFilter={yearFilter || null}
                   onEdit={setEditingWidget}
                   onDelete={handleDelete}
                   onDragStart={handleDragStart}

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
@@ -16,6 +17,92 @@ from app.duckdb_engine import register_dataset, _registered_datasets
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["pivot"])
+
+
+async def _ensure_dataset_ready(db: AsyncSession, dataset_id: str) -> Dataset:
+    """Verify the dataset exists, its parquet file is on disk, and its DuckDB view is registered.
+
+    Handles the full matrix of failure modes that can happen after a redeploy
+    or volume detach:
+
+    * Dataset row missing in Postgres  → 404
+    * ``parquet_path`` empty/None      → 410 (needs re-upload)
+    * File missing on disk             → 410 + mark ``missing_parquet``
+    * File present but view not yet    → register in this process
+      registered (e.g. new worker       (and flip status back to ``active``
+      thread, restart)                   if previously marked orphaned)
+
+    Returns the (possibly updated) Dataset ORM instance.
+    """
+    ds = (
+        await db.execute(select(Dataset).where(Dataset.id == dataset_id))
+    ).scalar_one_or_none()
+
+    if ds is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Dataset {dataset_id} not found.",
+        )
+
+    if not ds.parquet_path:
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                f"Dataset '{ds.name}' has no parquet file recorded. "
+                f"Please re-upload the source file."
+            ),
+        )
+
+    parquet_exists = Path(ds.parquet_path).exists()
+
+    if not parquet_exists:
+        logger.warning(
+            "Dataset %s (%s): parquet missing at %s — marking missing_parquet",
+            ds.id, ds.name, ds.parquet_path,
+        )
+        if ds.status != "missing_parquet":
+            ds.status = "missing_parquet"
+            await db.commit()
+        raise HTTPException(
+            status_code=410,
+            detail=(
+                f"Dataset '{ds.name}' is missing its data file and needs to be "
+                f"re-uploaded. Expected parquet at: {ds.parquet_path}. "
+                f"If this happened after a deploy, verify the DATA_DIR env var "
+                f"points to a persistent volume (Railway: /app/data)."
+            ),
+        )
+
+    # File is on disk. Make sure it's registered in DuckDB.
+    if dataset_id not in _registered_datasets:
+        try:
+            await asyncio.to_thread(register_dataset, ds.id, ds.parquet_path)
+            logger.info("Lazily registered DuckDB view for dataset %s", ds.id)
+        except FileNotFoundError as exc:
+            # Race: file was there moments ago but gone now.
+            ds.status = "missing_parquet"
+            await db.commit()
+            raise HTTPException(
+                status_code=410,
+                detail=(
+                    f"Dataset '{ds.name}' parquet file disappeared during "
+                    f"registration: {exc}. Please re-upload."
+                ),
+            ) from exc
+        except Exception as exc:
+            logger.exception("Failed to register dataset %s: %s", ds.id, exc)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to register dataset {ds.id}: {exc}",
+            ) from exc
+
+    # Recovered from an orphaned state → flip status back to active.
+    if ds.status == "missing_parquet":
+        ds.status = "active"
+        await db.commit()
+        logger.info("Dataset %s recovered from missing_parquet → active", ds.id)
+
+    return ds
 
 
 @router.post("/pivot", response_model=PivotResponse)
@@ -36,32 +123,12 @@ async def run_pivot(
         body.join_dimensions,
     )
 
-    # Ensure the dataset's DuckDB view is registered
-    if body.dataset_id not in _registered_datasets:
-        ds_result = await db.execute(
-            select(Dataset).where(Dataset.id == body.dataset_id, Dataset.status == "active")
-        )
-        ds = ds_result.scalar_one_or_none()
-        if ds and ds.parquet_path:
-            try:
-                await asyncio.to_thread(register_dataset, ds.id, ds.parquet_path)
-                logger.info("Lazily registered DuckDB view for dataset %s", ds.id)
-            except FileNotFoundError as exc:
-                logger.warning(
-                    "Dataset %s parquet missing; marking as missing_parquet: %s",
-                    ds.id, exc,
-                )
-                ds.status = "missing_parquet"
-                await db.commit()
-                raise HTTPException(
-                    status_code=410,
-                    detail=(
-                        f"Dataset '{ds.name}' is missing its data file and needs to be "
-                        f"re-uploaded. The parquet file at {ds.parquet_path} no longer exists."
-                    ),
-                ) from exc
-            except Exception as exc:
-                logger.warning("Failed to register dataset %s: %s", ds.id, exc)
+    # Ensure the fact dataset and any join-target datasets are ready.
+    await _ensure_dataset_ready(db, body.dataset_id)
+    if body.join_dimensions:
+        for target_ds_id in set(body.join_dimensions.values()):
+            if target_ds_id and target_ds_id != body.dataset_id:
+                await _ensure_dataset_ready(db, target_ds_id)
 
     # Look up relationships if cross-dataset dimensions are requested
     relationships = []
@@ -87,6 +154,8 @@ async def run_pivot(
             scenario_ids=body.scenario_ids or None,
             relationships=relationships,
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Pivot query failed: %s", exc)
         raise HTTPException(status_code=500, detail=f"Pivot query failed: {exc}") from exc

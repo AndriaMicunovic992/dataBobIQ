@@ -495,19 +495,21 @@ function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
   const [expanded, setExpanded] = useState(false);
   const filterEntries = Object.entries(rule.filter_expr || {});
 
-  // When the parent sidebar is collapsed, show only name + impact and
-  // suppress the per-card expand affordance.
+  // When the parent sidebar is collapsed, show only name + impact in a tight
+  // single-line chip and suppress the per-card expand affordance.
   if (!sidebarExpanded) {
     return (
       <div style={{
-        background: colors.bgCard, borderRadius: radius.md,
+        background: colors.bgCard, borderRadius: radius.sm,
         border: `1px solid ${colors.border}`,
-        marginBottom: spacing.sm,
-        padding: `${spacing.sm}px ${spacing.md}px`,
-        display: 'flex', alignItems: 'center', gap: spacing.sm,
+        marginBottom: spacing.xs,
+        padding: `${spacing.xs}px ${spacing.sm}px`,
+        display: 'flex', alignItems: 'center', gap: spacing.xs,
+        minWidth: 0,
       }}>
         <span style={{
-          flex: 1, fontSize: typography.fontSizes.sm,
+          flex: 1, minWidth: 0,
+          fontSize: typography.fontSizes.xs,
           fontWeight: typography.fontWeights.medium, color: colors.textPrimary,
           fontFamily: typography.fontFamily,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -515,7 +517,7 @@ function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
           {rule.name}
         </span>
         <span style={{
-          fontSize: typography.fontSizes.sm, fontWeight: typography.fontWeights.bold,
+          fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.bold,
           color: colors.textPrimary, fontFamily: typography.fontFamily,
           flexShrink: 0,
         }}>
@@ -682,7 +684,10 @@ function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onTog
   }
 
   return (
-    <div style={{ padding: spacing.md, height: '100%', overflowY: 'auto' }}>
+    <div style={{
+      padding: expanded ? spacing.md : spacing.sm,
+      height: '100%', overflowY: 'auto',
+    }}>
       {header}
 
       {/* Add rule button — only when sidebar is expanded (no room to show
@@ -952,7 +957,7 @@ export default function DashboardView({ dashboardId, modelId }) {
       <aside
         onClick={() => { if (!sidebarExpanded) setSidebarExpanded(true); }}
         style={{
-          width: sidebarExpanded ? 320 : 220,
+          width: sidebarExpanded ? 320 : 170,
           flexShrink: 0,
           borderLeft: `1px solid ${colors.border}`,
           background: colors.bgCard,

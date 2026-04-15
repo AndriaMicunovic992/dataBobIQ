@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import settings
 from app.database import get_db
 from app.models.metadata import Dataset, DatasetRelationship
 from app.schemas.pivot import PivotRequest, PivotResponse
 from app.services.pivot_engine import execute_pivot
+from app.services.scenario_engine import ensure_scenario_view
 from app.duckdb_engine import register_dataset, _registered_datasets
 
 logger = logging.getLogger(__name__)
@@ -129,6 +131,34 @@ async def run_pivot(
         for target_ds_id in set(body.join_dimensions.values()):
             if target_ds_id and target_ds_id != body.dataset_id:
                 await _ensure_dataset_ready(db, target_ds_id)
+
+    # Lazily register any scenario views referenced in the request. Without
+    # this, the UNION ALL in the pivot SQL would fail in a worker thread that
+    # hasn't yet seen the scenario parquet (e.g. right after a rule change).
+    if body.scenario_ids:
+        for sc_id in body.scenario_ids:
+            try:
+                await asyncio.to_thread(
+                    ensure_scenario_view,
+                    sc_id,
+                    body.model_id,
+                    settings.data_dir,
+                )
+            except ValueError as exc:
+                raise HTTPException(
+                    status_code=410,
+                    detail=(
+                        f"Scenario {sc_id} has no computed data. "
+                        f"Open the scenario and add/edit a rule to trigger recompute, "
+                        f"or POST to /api/scenarios/{sc_id}/recompute."
+                    ),
+                ) from exc
+            except Exception as exc:
+                logger.exception("Failed to register scenario view %s: %s", sc_id, exc)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to register scenario view {sc_id}: {exc}",
+                ) from exc
 
     # Look up relationships if cross-dataset dimensions are requested
     relationships = []

@@ -105,11 +105,14 @@ def _get_pivot_values(
     filters: dict,
     join_dimensions: dict[str, str] | None = None,
     relationships: list | None = None,
+    scenario_ids: list[str] | None = None,
 ) -> list[str]:
     """Fetch distinct values of the column_dimension field for pivoting.
 
     When the column_dimension comes from a joined dataset, builds the
-    necessary JOINs so the column is accessible.
+    necessary JOINs so the column is accessible. When ``scenario_ids`` is
+    non-empty, the distinct values include scenario-only values (e.g. a
+    forecast year that only exists in the scenario parquet).
     """
     view = view_name_for(dataset_id)
 
@@ -130,8 +133,18 @@ def _get_pivot_values(
     )
     where = f"WHERE {filter_clause}" if filter_clause else ""
 
+    if scenario_ids:
+        src_parts = [f"SELECT * FROM {view}"]
+        for sc_id in scenario_ids:
+            src_parts.append(f"SELECT * FROM {view_name_for(f'sc_{sc_id}')}")
+        fact_src = "(" + " UNION ALL BY NAME ".join(src_parts) + ")"
+    else:
+        fact_src = view
+
     if use_aliases:
-        from_clause = f"{view} AS f {join_sql}"
+        from_clause = f"{fact_src} AS f {join_sql}"
+    elif scenario_ids:
+        from_clause = f"{fact_src} AS _facts"
     else:
         from_clause = view
 
@@ -268,7 +281,14 @@ def build_pivot_sql(
     else:
         # Conditional aggregation pivot
         col_dim = request.column_dimension
-        pivot_values = _get_pivot_values(dataset_id, col_dim, filters, request.join_dimensions, relationships)
+        pivot_values = _get_pivot_values(
+            dataset_id,
+            col_dim,
+            filters,
+            request.join_dimensions,
+            relationships,
+            scenario_ids=scenario_ids,
+        )
         for pval in pivot_values:
             for m in request.measures:
                 agg = m.aggregation.upper()
@@ -306,17 +326,33 @@ def build_pivot_sql(
     where_sql = f"WHERE {filter_clause}" if filter_clause else ""
 
     # --- FROM clause with optional JOINs ---
-    scenario_cte = ""
+    # Scenario merging: the scenario parquet contains only the synthesized
+    # target-period rows (forward projection from base_year → target_year).
+    # Base and scenario rowsets are disjoint in the time dimension, so we
+    # UNION ALL them into a derived table and run the pivot on top. The
+    # dashboard's year-filter picks the right side naturally: filtering
+    # year=2026 hits only the scenario rows; filtering year=2025 hits only
+    # base. No COALESCE required.
+    #
+    # UNION ALL BY NAME tolerates schema drift between base and scenario
+    # parquets (DuckDB fills missing columns with NULL). An empty scenario
+    # parquet simply contributes zero rows.
+    if scenario_ids:
+        src_parts = [f"SELECT * FROM {view}"]
+        for sc_id in scenario_ids:
+            sc_view = view_name_for(f"sc_{sc_id}")
+            src_parts.append(f"SELECT * FROM {sc_view}")
+        fact_src = "(" + " UNION ALL BY NAME ".join(src_parts) + ")"
+    else:
+        fact_src = view
+
     if use_aliases:
-        from_clause = f"{view} AS f {join_sql}"
+        from_clause = f"{fact_src} AS f {join_sql}"
+    elif scenario_ids:
+        # A derived table requires an alias; column refs are still bare.
+        from_clause = f"{fact_src} AS _facts"
     else:
         from_clause = view
-
-    if scenario_ids:
-        # Build UNION ALL of base + scenarios, each stamped with data_layer
-        # Then we take COALESCE(scenario_val, actual_val) aggregated
-        # Simplified: just query actuals for now; scenario merge handled by scenario_engine
-        logger.debug("Scenario merging for pivot requested but using base view only for SQL build")
 
     # --- ORDER BY ---
     order_parts: list[str] = []
@@ -360,16 +396,33 @@ def _count_sql(
     filters: dict[str, list[str]],
     join_sql: str = "",
     alias_map: dict[str, str] | None = None,
+    scenario_ids: list[str] | None = None,
 ) -> tuple[str, list[Any]]:
-    """Build a COUNT(*) query for total row count (before LIMIT)."""
+    """Build a COUNT(*) query for total row count (before LIMIT).
+
+    When ``scenario_ids`` is non-empty, counts the UNION ALL of base +
+    scenario rows so the dashboard pagination reflects what the user
+    actually sees.
+    """
     view = view_name_for(dataset_id)
     use_aliases = bool(alias_map)
     filter_clause, params = _build_filter_clause(
         filters, alias_map=alias_map, use_aliases=use_aliases,
     )
     where = f"WHERE {filter_clause}" if filter_clause else ""
+
+    if scenario_ids:
+        src_parts = [f"SELECT * FROM {view}"]
+        for sc_id in scenario_ids:
+            src_parts.append(f"SELECT * FROM {view_name_for(f'sc_{sc_id}')}")
+        fact_src = "(" + " UNION ALL BY NAME ".join(src_parts) + ")"
+    else:
+        fact_src = view
+
     if use_aliases:
-        sql = f"SELECT COUNT(*) AS total FROM {view} AS f {join_sql} {where}"
+        sql = f"SELECT COUNT(*) AS total FROM {fact_src} AS f {join_sql} {where}"
+    elif scenario_ids:
+        sql = f"SELECT COUNT(*) AS total FROM {fact_src} AS _facts {where}"
     else:
         sql = f"SELECT COUNT(*) AS total FROM {view} {where}"
     return sql, list(params)
@@ -411,6 +464,7 @@ def execute_pivot(
     count_sql, count_params = _count_sql(
         dataset_id, request.filters or {},
         join_sql=join_sql, alias_map=alias_map,
+        scenario_ids=scenario_ids,
     )
     count_rows = execute_query(count_sql, count_params if count_params else None)
     total_count = count_rows[0]["total"] if count_rows else 0

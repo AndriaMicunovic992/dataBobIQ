@@ -330,10 +330,12 @@ def build_pivot_sql(
 
     order_sql = f"ORDER BY {', '.join(order_parts)}" if order_parts else ""
 
-    # --- ROLLUP totals ---
-    if request.include_totals and group_by_parts:
-        group_by_sql = f"GROUP BY ROLLUP ({', '.join(group_by_parts)})"
-    elif group_by_parts:
+    # --- GROUP BY ---
+    # Note: totals are computed by a dedicated second query in execute_pivot,
+    # not via ROLLUP. ROLLUP mixes the grand total with detail rows and can
+    # be truncated by LIMIT — running a separate aggregate query keeps totals
+    # always correct and always present.
+    if group_by_parts:
         group_by_sql = f"GROUP BY {', '.join(group_by_parts)}"
     else:
         group_by_sql = ""
@@ -371,6 +373,18 @@ def _count_sql(
     else:
         sql = f"SELECT COUNT(*) AS total FROM {view} {where}"
     return sql, list(params)
+
+
+def _build_totals_request(request: PivotRequest) -> PivotRequest:
+    """Clone the request with no row dimensions so the pivot builder produces
+    a single aggregated total row."""
+    return request.model_copy(update={
+        "row_dimensions": [],
+        "include_totals": False,
+        "limit": 1,
+        "offset": 0,
+        "sort_by": None,
+    })
 
 
 def execute_pivot(
@@ -411,14 +425,24 @@ def execute_pivot(
     col_names = [c.field for c in columns]
     row_lists = [[row.get(c) for c in col_names] for row in rows]
 
-    # Totals row (last row if ROLLUP used and all dims are None)
+    # Totals — computed by a dedicated aggregate query (no GROUP BY on row
+    # dims), so the grand total is correct and always present regardless of
+    # the detail LIMIT.
     totals: list[Any] | None = None
-    if request.include_totals and row_lists:
-        # ROLLUP produces a grand total row where GROUP BY columns are NULL
-        last = rows[-1] if rows else {}
-        if all(last.get(d) is None for d in request.row_dimensions):
-            totals = row_lists[-1]
-            row_lists = row_lists[:-1]
+    if request.include_totals and request.row_dimensions and col_names:
+        totals_req = _build_totals_request(request)
+        totals_sql, totals_params = build_pivot_sql(
+            totals_req, dataset_id, scenario_ids, relationships,
+        )
+        logger.debug("Totals SQL: %s | params=%s", totals_sql, totals_params)
+        totals_rows = execute_query(totals_sql, totals_params if totals_params else None)
+        if totals_rows:
+            t_row = totals_rows[0]
+            # Map by position — dimension columns are NULL in the totals row.
+            totals = [
+                None if c.type == "dimension" else t_row.get(c.field)
+                for c in columns
+            ]
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
     logger.info(

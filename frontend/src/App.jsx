@@ -171,13 +171,18 @@ function CreateDashboardModal({ modelId, onClose, onCreated }) {
   );
 }
 
-function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, dashboards, onCreateDashboard, onDeleteDashboard }) {
+const SIDEBAR_COLLAPSED_W = 60;
+const SIDEBAR_EXPANDED_W = 240;
+
+function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChange, onCreateModel, onUpload, dashboards, onCreateDashboard, onDeleteDashboard, expanded, onExpandedChange }) {
   const selectedModel = models?.find((m) => m.id === selectedModelId);
 
   return (
     <aside
+      onMouseEnter={() => onExpandedChange(true)}
+      onMouseLeave={() => onExpandedChange(false)}
       style={{
-        width: 240,
+        width: expanded ? SIDEBAR_EXPANDED_W : SIDEBAR_COLLAPSED_W,
         minHeight: '100vh',
         background: colors.sidebar,
         display: 'flex',
@@ -186,9 +191,19 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
         position: 'fixed',
         top: 0, left: 0, bottom: 0,
         zIndex: 100,
-        overflowY: 'auto',
+        overflowY: expanded ? 'auto' : 'hidden',
+        overflowX: 'hidden',
+        transition: 'width 0.2s ease',
+        boxShadow: expanded ? '4px 0 20px rgba(0,0,0,0.18)' : 'none',
       }}
     >
+      {/* Inner container is fixed to the expanded width so content doesn't
+          reflow on hover. The outer aside clips to 60px when collapsed,
+          revealing just the left icon gutter. */}
+      <div style={{
+        width: SIDEBAR_EXPANDED_W, minWidth: SIDEBAR_EXPANDED_W,
+        display: 'flex', flexDirection: 'column', minHeight: '100vh',
+      }}>
       {/* Brand */}
       <div style={{ padding: `${spacing.lg}px ${spacing.md}px`, borderBottom: `1px solid rgba(255,255,255,0.06)` }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm }}>
@@ -354,6 +369,7 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
           Powered by Claude AI
         </div>
       </div>
+      </div>
     </aside>
   );
 }
@@ -391,6 +407,7 @@ export default function App() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [showCreateDashboardModal, setShowCreateDashboardModal] = useState(false);
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
 
   const qc = useQueryClient();
   const { data: models = [] } = useQuery({
@@ -515,13 +532,18 @@ export default function App() {
         dashboards={dashboards}
         onCreateDashboard={() => setShowCreateDashboardModal(true)}
         onDeleteDashboard={handleDeleteDashboard}
+        expanded={sidebarExpanded}
+        onExpandedChange={setSidebarExpanded}
       />
 
-      {/* Main content — chat now floats on top, so no right margin push. */}
+      {/* Main content — chat floats on top, so no right margin push. Sidebar
+          is collapsed by default; we reserve the collapsed width (60px) so
+          the main content doesn't reflow when hovering expands the sidebar
+          (it overlays). */}
       <main
         style={{
           flex: 1,
-          marginLeft: 240,
+          marginLeft: SIDEBAR_COLLAPSED_W,
           minHeight: '100vh',
           overflowX: 'hidden',
         }}

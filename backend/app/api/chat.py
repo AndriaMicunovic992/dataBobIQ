@@ -22,12 +22,38 @@ router = APIRouter(tags=["chat"])
 
 
 async def _resolve_dataset_id(model_id: str, dataset_id: str | None, db: AsyncSession) -> str:
-    """Return an explicit dataset_id or fall back to the first active dataset."""
+    """Return an explicit dataset_id or fall back to the primary fact dataset.
+
+    When the frontend doesn't pass a dataset_id, we need to pick the dataset
+    the chat agent should default to for tools that don't specify
+    ``dataset_name``. The seeded calendar/dimension tables are NEVER the
+    right default — they don't contain the fact measures (amount, etc.).
+    Prefer datasets whose ``fact_type`` is not ``dimension``; fall back to
+    any active dataset only if nothing else exists.
+    """
     if dataset_id:
         return dataset_id
+
+    # First choice: an active fact/custom dataset (not a dimension table).
+    result = await db.execute(
+        select(Dataset.id)
+        .where(
+            Dataset.model_id == model_id,
+            Dataset.status == "active",
+            Dataset.fact_type != "dimension",
+        )
+        .order_by(Dataset.created_at.asc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is not None:
+        return row
+
+    # Fallback: any active dataset.
     result = await db.execute(
         select(Dataset.id)
         .where(Dataset.model_id == model_id, Dataset.status == "active")
+        .order_by(Dataset.created_at.asc())
         .limit(1)
     )
     row = result.scalar_one_or_none()

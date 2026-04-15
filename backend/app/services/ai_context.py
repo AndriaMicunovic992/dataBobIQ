@@ -81,7 +81,14 @@ async def build_ai_context(
         )
         columns = col_result.scalars().all()
 
-        dimensions = [c for c in columns if c.column_role == "dimension"]
+        # Match the frontend metadata_svc convention: any non-measure role
+        # (attribute / time / key / dimension) is presented as a dimension to
+        # the AI. Otherwise fact-table dimensions parsed as "attribute" never
+        # reach the model and the agent reports "I can't see the dataset".
+        dimensions = [
+            c for c in columns
+            if c.column_role in ("attribute", "time", "key", "dimension")
+        ]
         measures = [c for c in columns if c.column_role == "measure"]
 
         # Dimensions with cardinality and top values

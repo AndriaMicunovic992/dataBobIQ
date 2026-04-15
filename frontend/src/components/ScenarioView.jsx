@@ -360,44 +360,89 @@ function RuleForm({ scenarioId, modelId, metadata, initialRule, onClose }) {
 
 /** Visual styling per rule type — drives the colored "header" pill. */
 const RULE_TYPE_STYLES = {
-  multiplier: { bg: '#dcfce7', text: '#065f46', border: '#86efac', label: 'Multiplier' },
+  multiplier: { bg: '#dcfce7', text: '#065f46', border: '#86efac', label: 'Revenue uplift' },
   offset:     { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: 'Offset' },
-  set_value:  { bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Set value' },
+  set_value:  { bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Override' },
 };
 
-/** Collapsible rule card. Shows only the colored header by default; expands
- *  on hover to reveal details plus edit / delete actions. Matches the
- *  reference card design (pill header → title → details). */
-function RuleCard({ rule, onEdit, onDelete, deleting }) {
-  const [hovered, setHovered] = useState(false);
+/** A single rule. Renders differently based on `expanded` — the expanded
+ *  state is driven by the parent RulesPanel (hover on the whole list
+ *  collapses/expands every rule together). The expanded layout mirrors
+ *  the reference card: pill row → bold title → IMPACT / NOTE columns +
+ *  Edit & Delete in the top-right. The collapsed layout is just the
+ *  colored title pill. */
+function RuleCard({ rule, expanded, onEdit, onDelete, deleting }) {
   const style = RULE_TYPE_STYLES[rule.rule_type] || RULE_TYPE_STYLES.multiplier;
   const hasFilters = rule.filter_expr && Object.keys(rule.filter_expr).length > 0;
-  const filterChips = hasFilters
-    ? Object.entries(rule.filter_expr).slice(0, 2).map(([k, v]) =>
-        `${k}: ${Array.isArray(v) ? v.join(', ') : v}`
-      )
-    : [];
 
-  return (
-    <div
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-      style={{
-        background: colors.bgCard,
-        borderRadius: radius.md,
-        border: `1px solid ${hovered ? style.border : colors.border}`,
-        overflow: 'hidden',
-        transition: 'border-color 0.15s, box-shadow 0.15s',
-        boxShadow: hovered ? shadows.sm : 'none',
-      }}
-    >
-      {/* Header — the colored pill row. Always visible. */}
+  // A single compact "scope" pill that summarizes the first filter, e.g.
+  // "DACH · SaaS" in the reference. Falls back to the target field if the
+  // rule has no filter.
+  const scopePill = hasFilters
+    ? Object.values(rule.filter_expr)[0]
+    : null;
+  const scopePillText = scopePill
+    ? (Array.isArray(scopePill) ? scopePill.slice(0, 3).join(' · ') : String(scopePill))
+    : rule.target_field;
+
+  // The "IMPACT" line in the reference reads "+4.0% from Apr 26". We
+  // rebuild something equivalent from the adjustment + period_from.
+  const impactText = (() => {
+    const adj = rule.adjustment || {};
+    let core;
+    if (rule.rule_type === 'multiplier') {
+      const pct = ((adj.factor ?? 1) - 1) * 100;
+      core = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+    } else if (rule.rule_type === 'offset') {
+      const v = adj.offset ?? 0;
+      core = v >= 0 ? `+${v.toLocaleString()}` : v.toLocaleString();
+    } else {
+      core = `= ${(adj.value ?? '?').toLocaleString?.() ?? adj.value}`;
+    }
+    return rule.period_from ? `${core} from ${rule.period_from}` : core;
+  })();
+
+  // The "NOTE" line summarizes filters or falls back to the target field.
+  const noteText = hasFilters
+    ? `Applied to ${Object.entries(rule.filter_expr).map(([k, v]) =>
+        `${k} ${Array.isArray(v) ? v.slice(0, 3).join(', ') : v}`
+      ).join('; ')}.`
+    : `Applied to ${rule.target_field}.`;
+
+  // Collapsed: just the colored title pill, nothing else.
+  if (!expanded) {
+    return (
       <div style={{
-        display: 'flex', alignItems: 'center', gap: spacing.sm,
-        padding: `${spacing.sm}px ${spacing.md}px`,
-        flexWrap: 'wrap',
+        padding: `${spacing.xs}px 0`,
+        display: 'flex', alignItems: 'center',
       }}>
-        {/* Colored type pill */}
+        <span style={{
+          display: 'inline-flex', alignItems: 'center',
+          padding: '6px 14px', borderRadius: radius.full,
+          background: style.bg, color: style.text,
+          border: `1px solid ${style.border}`,
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          fontWeight: typography.fontWeights.semibold,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          maxWidth: '100%',
+        }}>
+          {rule.name || style.label}
+        </span>
+      </div>
+    );
+  }
+
+  // Expanded: full card matching the reference image.
+  return (
+    <div style={{
+      background: colors.bgCard,
+      borderRadius: radius.lg,
+      border: `1px solid ${colors.border}`,
+      padding: `${spacing.md}px ${spacing.lg}px`,
+      boxShadow: shadows.sm,
+    }}>
+      {/* Row 1: colored type pill + scope pill + Edit (top-right) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.sm }}>
         <span style={{
           display: 'inline-flex', alignItems: 'center',
           padding: '4px 12px', borderRadius: radius.full,
@@ -407,111 +452,139 @@ function RuleCard({ rule, onEdit, onDelete, deleting }) {
           fontWeight: typography.fontWeights.semibold,
           whiteSpace: 'nowrap',
         }}>
-          {rule.name || style.label}
+          {style.label}
         </span>
-        {/* Filter / scope chip(s) */}
-        {filterChips.map((chip, i) => (
-          <span key={i} style={{
-            display: 'inline-flex', alignItems: 'center',
-            padding: '4px 10px', borderRadius: radius.full,
-            background: colors.bgMuted, color: colors.textSecondary,
-            border: `1px solid ${colors.border}`,
-            fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
-            whiteSpace: 'nowrap',
-          }}>
-            {chip}
-          </span>
-        ))}
+        <span style={{
+          display: 'inline-flex', alignItems: 'center',
+          padding: '4px 12px', borderRadius: radius.full,
+          background: colors.bgCard, color: colors.textSecondary,
+          border: `1px solid ${colors.border}`,
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          fontWeight: typography.fontWeights.medium,
+          whiteSpace: 'nowrap',
+        }}>
+          {scopePillText}
+        </span>
         <div style={{ flex: 1 }} />
-        {hovered && (
-          <div style={{ display: 'flex', gap: spacing.xs }}>
-            <button
-              onClick={(e) => { e.stopPropagation(); onEdit(rule); }}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: colors.primary, fontSize: typography.fontSizes.xs,
-                fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-                padding: `2px ${spacing.xs}px`,
-              }}
-            >
-              Edit
-            </button>
-            <button
-              onClick={(e) => { e.stopPropagation(); onDelete(rule.id); }}
-              disabled={deleting}
-              style={{
-                background: 'none', border: 'none', cursor: deleting ? 'default' : 'pointer',
-                color: colors.danger, fontSize: typography.fontSizes.xs,
-                fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
-                padding: `2px ${spacing.xs}px`, opacity: deleting ? 0.5 : 1,
-              }}
-            >
-              Delete
-            </button>
-          </div>
-        )}
+        <button
+          onClick={() => onEdit(rule)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: colors.textSecondary, fontSize: typography.fontSizes.sm,
+            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+            padding: `2px ${spacing.xs}px`,
+          }}
+        >
+          Edit
+        </button>
+        <button
+          onClick={() => onDelete(rule.id)}
+          disabled={deleting}
+          style={{
+            background: 'none', border: 'none', cursor: deleting ? 'default' : 'pointer',
+            color: colors.danger, fontSize: typography.fontSizes.sm,
+            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+            padding: `2px ${spacing.xs}px`, opacity: deleting ? 0.5 : 1,
+          }}
+        >
+          Delete
+        </button>
       </div>
 
-      {/* Expanded details — only shown on hover. Structured as IMPACT / NOTE
-          columns (matching the reference card), plus period if present. */}
-      {hovered && (
-        <div style={{
-          padding: `${spacing.sm}px ${spacing.md}px ${spacing.md}px`,
-          borderTop: `1px solid ${colors.border}`,
-          background: colors.bgMuted,
-          display: 'flex', gap: spacing.xl, flexWrap: 'wrap',
-        }}>
-          <DetailBlock
-            label="Impact"
-            value={
-              <span style={{ fontFamily: 'monospace' }}>
-                <span style={{ color: colors.textPrimary }}>{rule.target_field}</span>
-                {' → '}
-                <span style={{ color: colors.primary, fontWeight: typography.fontWeights.semibold }}>
-                  {formatAdjustment(rule)}
-                </span>
-              </span>
-            }
-          />
-          {rule.period_from && (
-            <DetailBlock
-              label="Period"
-              value={
-                <span style={{ fontFamily: typography.fontFamily, color: colors.textPrimary }}>
-                  {rule.period_from}{rule.period_to ? ` → ${rule.period_to}` : '+'}
-                </span>
-              }
-            />
-          )}
-          {hasFilters && (
-            <DetailBlock
-              label="Filters"
-              value={
-                <span style={{ color: colors.textSecondary, fontFamily: typography.fontFamily }}>
-                  {Object.entries(rule.filter_expr).map(([k, v]) =>
-                    `${k}: ${Array.isArray(v) ? v.join(', ') : v}`
-                  ).join(' · ')}
-                </span>
-              }
-            />
-          )}
-        </div>
-      )}
+      {/* Row 2: bold title */}
+      <h4 style={{
+        margin: `0 0 ${spacing.md}px`,
+        fontSize: typography.fontSizes.lg,
+        fontWeight: typography.fontWeights.bold,
+        color: colors.textPrimary,
+        fontFamily: typography.fontFamily,
+        lineHeight: 1.3,
+      }}>
+        {rule.name || `${style.label} on ${rule.target_field}`}
+      </h4>
+
+      {/* Row 3: IMPACT / NOTE grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: spacing.xl,
+        paddingTop: spacing.sm,
+        borderTop: `1px solid ${colors.border}`,
+      }}>
+        <DetailBlock
+          label="Impact"
+          value={
+            <span style={{
+              fontFamily: typography.fontFamily, fontSize: typography.fontSizes.md,
+              fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
+            }}>
+              {impactText}
+            </span>
+          }
+        />
+        <DetailBlock
+          label="Note"
+          value={
+            <span style={{
+              fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm,
+              color: colors.textSecondary, lineHeight: 1.5,
+            }}>
+              {noteText}
+            </span>
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+/** The rules panel is the collapsible container. Retracted by default
+ *  (showing only each rule's title pill), it expands on mouseover so the
+ *  user sees every rule's full card at once — including the Edit / Delete
+ *  actions. Hover state lives on the container so individual rules don't
+ *  flicker independently. */
+function RulesPanel({ rules, onEdit, onDelete, deleting }) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        display: 'flex', flexDirection: 'column',
+        gap: hovered ? spacing.md : spacing.xs,
+        padding: hovered ? spacing.md : `${spacing.xs}px ${spacing.sm}px`,
+        background: hovered ? colors.bgMuted : 'transparent',
+        border: `1px solid ${hovered ? colors.border : 'transparent'}`,
+        borderRadius: radius.md,
+        transition: 'background 0.15s, border-color 0.15s, padding 0.15s',
+      }}
+    >
+      {rules.map((rule) => (
+        <RuleCard
+          key={rule.id}
+          rule={rule}
+          expanded={hovered}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          deleting={deleting}
+        />
+      ))}
     </div>
   );
 }
 
 function DetailBlock({ label, value }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       <span style={{
-        fontSize: 10, color: colors.textMuted,
+        fontSize: typography.fontSizes.xs, color: colors.textMuted,
         textTransform: 'uppercase', letterSpacing: '0.08em',
         fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
       }}>
         {label}
       </span>
-      <span style={{ fontSize: typography.fontSizes.sm, lineHeight: 1.4 }}>{value}</span>
+      <span style={{ lineHeight: 1.4 }}>{value}</span>
     </div>
   );
 }
@@ -741,8 +814,10 @@ function ScenarioDetail({ scenarioId, modelId }) {
         />
       )}
 
-      {/* Rules list — each card is collapsed (header only) by default and
-          expands on mouseover to reveal details + edit/delete actions. */}
+      {/* Rules panel — the whole panel is collapsed by default (just the
+          title pills of each rule) and expands on mouseover, surfacing
+          every rule's full card with Edit / Delete actions. Rules inside
+          are never individually collapsed; the container is the unit. */}
       <div style={{ marginBottom: spacing.lg }}>
         <h4 style={{ margin: `0 0 ${spacing.sm}px`, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
           Rules ({rules.length})
@@ -752,17 +827,12 @@ function ScenarioDetail({ scenarioId, modelId }) {
             No rules yet. Add a rule to modify this scenario.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm }}>
-            {rules.map((rule) => (
-              <RuleCard
-                key={rule.id}
-                rule={rule}
-                onEdit={(r) => { setShowRuleForm(false); setEditingRule(r); }}
-                onDelete={(id) => deleteMut.mutate(id)}
-                deleting={deleteMut.isPending}
-              />
-            ))}
-          </div>
+          <RulesPanel
+            rules={rules}
+            onEdit={(r) => { setShowRuleForm(false); setEditingRule(r); }}
+            onDelete={(id) => deleteMut.mutate(id)}
+            deleting={deleteMut.isPending}
+          />
         )}
       </div>
 

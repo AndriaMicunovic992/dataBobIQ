@@ -5,6 +5,7 @@ import {
   useCreateScenario,
   useDeleteScenario,
   useAddRule,
+  useUpdateRule,
   useDeleteRule,
   useRecompute,
   useVariance,
@@ -77,16 +78,34 @@ function CreateScenarioForm({ modelId, onClose }) {
   );
 }
 
-function RuleForm({ scenarioId, modelId, metadata, onClose }) {
-  const [name, setName] = useState('');
-  const [ruleType, setRuleType] = useState('multiplier');
-  const [targetField, setTargetField] = useState('');
-  const [value, setValue] = useState('');
-  const [periodFrom, setPeriodFrom] = useState('');
-  const [periodTo, setPeriodTo] = useState('');
+function RuleForm({ scenarioId, modelId, metadata, initialRule, onClose }) {
+  const isEdit = !!initialRule;
+  // Seed from an existing rule when we're editing. For the value field we
+  // look at whichever adjustment key matches the rule type.
+  const initAdj = initialRule?.adjustment || {};
+  const initValue =
+    initAdj.factor != null ? initAdj.factor
+    : initAdj.offset != null ? initAdj.offset
+    : initAdj.value != null ? initAdj.value
+    : '';
+  const initFilters = initialRule?.filter_expr
+    ? Object.entries(initialRule.filter_expr).map(([column, vals]) => ({
+        column,
+        values: Array.isArray(vals) ? vals.map(String) : [String(vals)],
+      }))
+    : [];
+
+  const [name, setName] = useState(initialRule?.name || '');
+  const [ruleType, setRuleType] = useState(initialRule?.rule_type || 'multiplier');
+  const [targetField, setTargetField] = useState(initialRule?.target_field || '');
+  const [value, setValue] = useState(String(initValue ?? ''));
+  const [periodFrom, setPeriodFrom] = useState(initialRule?.period_from || '');
+  const [periodTo, setPeriodTo] = useState(initialRule?.period_to || '');
   const [baseYear, setBaseYear] = useState(String(currentYear - 1));
-  const [filters, setFilters] = useState([]);  // [{column, values: []}]
-  const mut = useAddRule(scenarioId, modelId);
+  const [filters, setFilters] = useState(initFilters);  // [{column, values: []}]
+  const addMut = useAddRule(scenarioId, modelId);
+  const updateMut = useUpdateRule(scenarioId, modelId);
+  const mut = isEdit ? updateMut : addMut;
 
   // Collect measures from all datasets in the model, deduplicating by name
   const measures = useMemo(() => {
@@ -170,7 +189,11 @@ function RuleForm({ scenarioId, modelId, metadata, onClose }) {
       period_to: periodTo || undefined,
     };
 
-    mut.mutate(rule, { onSuccess: onClose });
+    if (isEdit) {
+      updateMut.mutate({ ruleId: initialRule.id, data: rule }, { onSuccess: onClose });
+    } else {
+      addMut.mutate(rule, { onSuccess: onClose });
+    }
   };
 
   // Get dimension values for a selected filter column
@@ -186,7 +209,7 @@ function RuleForm({ scenarioId, modelId, metadata, onClose }) {
   return (
     <div style={{ background: colors.bgMuted, borderRadius: radius.md, border: `1px solid ${colors.border}`, padding: spacing.md, marginBottom: spacing.md }}>
       <h4 style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
-        Add Rule
+        {isEdit ? 'Edit Rule' : 'Add Rule'}
       </h4>
 
       {/* Row 1: Name, Type */}
@@ -327,8 +350,168 @@ function RuleForm({ scenarioId, modelId, metadata, onClose }) {
       {mut.isError && <p style={{ color: colors.danger, fontSize: typography.fontSizes.sm, margin: `0 0 ${spacing.xs}px`, fontFamily: typography.fontFamily }}>{mut.error?.message}</p>}
       <div style={{ display: 'flex', gap: spacing.sm, justifyContent: 'flex-end' }}>
         <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" size="sm" loading={mut.isPending} disabled={!targetField || !value} onClick={handleSubmit}>Add Rule</Button>
+        <Button variant="primary" size="sm" loading={mut.isPending} disabled={!targetField || !value} onClick={handleSubmit}>
+          {isEdit ? 'Save' : 'Add Rule'}
+        </Button>
       </div>
+    </div>
+  );
+}
+
+/** Visual styling per rule type — drives the colored "header" pill. */
+const RULE_TYPE_STYLES = {
+  multiplier: { bg: '#dcfce7', text: '#065f46', border: '#86efac', label: 'Multiplier' },
+  offset:     { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: 'Offset' },
+  set_value:  { bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Set value' },
+};
+
+/** Collapsible rule card. Shows only the colored header by default; expands
+ *  on hover to reveal details plus edit / delete actions. Matches the
+ *  reference card design (pill header → title → details). */
+function RuleCard({ rule, onEdit, onDelete, deleting }) {
+  const [hovered, setHovered] = useState(false);
+  const style = RULE_TYPE_STYLES[rule.rule_type] || RULE_TYPE_STYLES.multiplier;
+  const hasFilters = rule.filter_expr && Object.keys(rule.filter_expr).length > 0;
+  const filterChips = hasFilters
+    ? Object.entries(rule.filter_expr).slice(0, 2).map(([k, v]) =>
+        `${k}: ${Array.isArray(v) ? v.join(', ') : v}`
+      )
+    : [];
+
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: colors.bgCard,
+        borderRadius: radius.md,
+        border: `1px solid ${hovered ? style.border : colors.border}`,
+        overflow: 'hidden',
+        transition: 'border-color 0.15s, box-shadow 0.15s',
+        boxShadow: hovered ? shadows.sm : 'none',
+      }}
+    >
+      {/* Header — the colored pill row. Always visible. */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: spacing.sm,
+        padding: `${spacing.sm}px ${spacing.md}px`,
+        flexWrap: 'wrap',
+      }}>
+        {/* Colored type pill */}
+        <span style={{
+          display: 'inline-flex', alignItems: 'center',
+          padding: '4px 12px', borderRadius: radius.full,
+          background: style.bg, color: style.text,
+          border: `1px solid ${style.border}`,
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          fontWeight: typography.fontWeights.semibold,
+          whiteSpace: 'nowrap',
+        }}>
+          {rule.name || style.label}
+        </span>
+        {/* Filter / scope chip(s) */}
+        {filterChips.map((chip, i) => (
+          <span key={i} style={{
+            display: 'inline-flex', alignItems: 'center',
+            padding: '4px 10px', borderRadius: radius.full,
+            background: colors.bgMuted, color: colors.textSecondary,
+            border: `1px solid ${colors.border}`,
+            fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+            whiteSpace: 'nowrap',
+          }}>
+            {chip}
+          </span>
+        ))}
+        <div style={{ flex: 1 }} />
+        {hovered && (
+          <div style={{ display: 'flex', gap: spacing.xs }}>
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(rule); }}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: colors.primary, fontSize: typography.fontSizes.xs,
+                fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+                padding: `2px ${spacing.xs}px`,
+              }}
+            >
+              Edit
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(rule.id); }}
+              disabled={deleting}
+              style={{
+                background: 'none', border: 'none', cursor: deleting ? 'default' : 'pointer',
+                color: colors.danger, fontSize: typography.fontSizes.xs,
+                fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+                padding: `2px ${spacing.xs}px`, opacity: deleting ? 0.5 : 1,
+              }}
+            >
+              Delete
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Expanded details — only shown on hover. Structured as IMPACT / NOTE
+          columns (matching the reference card), plus period if present. */}
+      {hovered && (
+        <div style={{
+          padding: `${spacing.sm}px ${spacing.md}px ${spacing.md}px`,
+          borderTop: `1px solid ${colors.border}`,
+          background: colors.bgMuted,
+          display: 'flex', gap: spacing.xl, flexWrap: 'wrap',
+        }}>
+          <DetailBlock
+            label="Impact"
+            value={
+              <span style={{ fontFamily: 'monospace' }}>
+                <span style={{ color: colors.textPrimary }}>{rule.target_field}</span>
+                {' → '}
+                <span style={{ color: colors.primary, fontWeight: typography.fontWeights.semibold }}>
+                  {formatAdjustment(rule)}
+                </span>
+              </span>
+            }
+          />
+          {rule.period_from && (
+            <DetailBlock
+              label="Period"
+              value={
+                <span style={{ fontFamily: typography.fontFamily, color: colors.textPrimary }}>
+                  {rule.period_from}{rule.period_to ? ` → ${rule.period_to}` : '+'}
+                </span>
+              }
+            />
+          )}
+          {hasFilters && (
+            <DetailBlock
+              label="Filters"
+              value={
+                <span style={{ color: colors.textSecondary, fontFamily: typography.fontFamily }}>
+                  {Object.entries(rule.filter_expr).map(([k, v]) =>
+                    `${k}: ${Array.isArray(v) ? v.join(', ') : v}`
+                  ).join(' · ')}
+                </span>
+              }
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DetailBlock({ label, value }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+      <span style={{
+        fontSize: 10, color: colors.textMuted,
+        textTransform: 'uppercase', letterSpacing: '0.08em',
+        fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+      }}>
+        {label}
+      </span>
+      <span style={{ fontSize: typography.fontSizes.sm, lineHeight: 1.4 }}>{value}</span>
     </div>
   );
 }
@@ -437,6 +620,8 @@ function ScenarioDetail({ scenarioId, modelId }) {
   const deleteMut = useDeleteRule(scenarioId, modelId);
   const recomputeMut = useRecompute(scenarioId);
   const [showRuleForm, setShowRuleForm] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+  const closeRuleForm = () => { setShowRuleForm(false); setEditingRule(null); };
   const [waterfallBreakdown, setWaterfallBreakdown] = useState('');
   const [waterfallMeasure, setWaterfallMeasure] = useState('');
 
@@ -534,7 +719,7 @@ function ScenarioDetail({ scenarioId, modelId }) {
         <Button variant="secondary" size="sm" loading={recomputeMut.isPending} onClick={() => recomputeMut.mutate()}>
           ↻ Recompute
         </Button>
-        <Button variant="primary" size="sm" onClick={() => setShowRuleForm(true)}>
+        <Button variant="primary" size="sm" onClick={() => { setEditingRule(null); setShowRuleForm(true); }}>
           + Add Rule
         </Button>
       </div>
@@ -545,12 +730,19 @@ function ScenarioDetail({ scenarioId, modelId }) {
         </p>
       )}
 
-      {/* Rule form */}
-      {showRuleForm && (
-        <RuleForm scenarioId={scenarioId} modelId={modelId} metadata={metadata} onClose={() => setShowRuleForm(false)} />
+      {/* Rule form — shared between create and edit. */}
+      {(showRuleForm || editingRule) && (
+        <RuleForm
+          scenarioId={scenarioId}
+          modelId={modelId}
+          metadata={metadata}
+          initialRule={editingRule}
+          onClose={closeRuleForm}
+        />
       )}
 
-      {/* Rules list */}
+      {/* Rules list — each card is collapsed (header only) by default and
+          expands on mouseover to reveal details + edit/delete actions. */}
       <div style={{ marginBottom: spacing.lg }}>
         <h4 style={{ margin: `0 0 ${spacing.sm}px`, fontSize: typography.fontSizes.md, fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily }}>
           Rules ({rules.length})
@@ -562,46 +754,13 @@ function ScenarioDetail({ scenarioId, modelId }) {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: spacing.sm }}>
             {rules.map((rule) => (
-              <div key={rule.id} style={{
-                background: colors.bgCard, borderRadius: radius.md, border: `1px solid ${colors.border}`,
-                padding: `${spacing.sm}px ${spacing.md}px`, display: 'flex', alignItems: 'center', gap: spacing.md,
-              }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
-                    <span style={{ fontWeight: typography.fontWeights.medium, color: colors.textPrimary, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
-                      {rule.name || rule.rule_type}
-                    </span>
-                    <Badge variant="muted">{rule.rule_type}</Badge>
-                    {rule.period_from && (
-                      <span style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily }}>
-                        {rule.period_from}{rule.period_to ? ` → ${rule.period_to}` : '+'}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily, marginTop: 2, display: 'flex', gap: spacing.sm, flexWrap: 'wrap' }}>
-                    <span>
-                      <span style={{ fontFamily: 'monospace' }}>{rule.target_field}</span>
-                      {' → '}
-                      <span style={{ color: colors.primary, fontFamily: 'monospace' }}>{formatAdjustment(rule)}</span>
-                    </span>
-                    {rule.filter_expr && Object.keys(rule.filter_expr).length > 0 && (
-                      <span style={{ color: colors.textMuted }}>
-                        | {Object.entries(rule.filter_expr).map(([k, v]) =>
-                          `${k}: ${Array.isArray(v) ? v.join(', ') : v}`
-                        ).join(' · ')}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  loading={deleteMut.isPending}
-                  onClick={() => deleteMut.mutate(rule.id)}
-                >
-                  ×
-                </Button>
-              </div>
+              <RuleCard
+                key={rule.id}
+                rule={rule}
+                onEdit={(r) => { setShowRuleForm(false); setEditingRule(r); }}
+                onDelete={(id) => deleteMut.mutate(id)}
+                deleting={deleteMut.isPending}
+              />
             ))}
           </div>
         )}

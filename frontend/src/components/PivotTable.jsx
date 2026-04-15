@@ -14,8 +14,11 @@ function formatValue(val, field = '') {
 }
 
 export default function PivotTable({ data, loading, error }) {
-  const [sortCol, setSortCol] = useState(null);
-  const [sortDir, setSortDir] = useState('desc');
+  // Default: first column, ascending. Rows are sorted ascending on initial
+  // render and every first click on a new column; clicking the same column
+  // again toggles to descending.
+  const [sortCol, setSortCol] = useState(0);
+  const [sortDir, setSortDir] = useState('asc');
 
   if (loading) {
     return (
@@ -87,7 +90,7 @@ export default function PivotTable({ data, loading, error }) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
     } else {
       setSortCol(colIdx);
-      setSortDir('desc');
+      setSortDir('asc');
     }
   };
 

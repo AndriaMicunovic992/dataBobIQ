@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { streamChat } from '../api.js';
 import { colors, spacing, radius, typography, shadows, transitions, inputStyle } from '../theme.js';
 import { Button } from './common/Button.jsx';
@@ -156,19 +157,35 @@ function ThinkingIndicator() {
   );
 }
 
-export default function ChatPanel({ modelId, onClose }) {
+export default function ChatPanel({ modelId, onClose, mode = 'data' }) {
+  // Mode is driven by the parent (App) based on the active tab:
+  //   - MODELLING tabs (schema / knowledge) → 'data' (data agent)
+  //   - Dashboard tabs                      → 'scenario' (scenario agent)
+  // We re-key the welcome message whenever the mode changes so users see the
+  // right persona without a manual toggle.
+  const qc = useQueryClient();
+  const welcomeByMode = {
+    data: "Hi! I'm Bob, your data agent. Ask me to map columns, build KPIs, define knowledge, or explore your model.\n\nTry: \"What are the top 5 expense categories?\" or \"Classify the uploaded GL file\"",
+    scenario: "Hi! I'm Bob, your scenario agent. Ask me to build what-if scenarios, tweak rules, or compare forecasts to actuals.\n\nTry: \"Create a scenario with revenue up 10% for 2026\" or \"Compare scenario Q4 to actuals\"",
+  };
   const [messages, setMessages] = useState([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      parts: [{ type: 'text', content: "Hi! I'm Bob, your CFO companion. Ask me to explore your data, explain trends, build KPIs, or create what-if scenarios.\n\nTry: \"What are the top 5 expense categories?\" or \"Create a scenario with revenue up 10%\"" }],
-    },
+    { id: 'welcome', role: 'assistant', parts: [{ type: 'text', content: welcomeByMode[mode] }] },
   ]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
-  const [mode, setMode] = useState('data'); // 'data' | 'scenario'
   const messagesEndRef = useRef(null);
   const stopRef = useRef(null);
+
+  // Swap the welcome message when the mode flips (e.g. user switches tabs
+  // while the chat is open) — but only if the chat is still untouched.
+  useEffect(() => {
+    setMessages((prev) => {
+      if (prev.length !== 1 || prev[0].id !== 'welcome') return prev;
+      return [{ id: 'welcome', role: 'assistant', parts: [{ type: 'text', content: welcomeByMode[mode] }] }];
+    });
+    // welcomeByMode is a local constant — eslint-safe to exclude
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   // Floating window position (bottom-right by default) and drag state.
   const panelWidth = 400;
@@ -258,6 +275,12 @@ export default function ChatPanel({ modelId, onClose }) {
             return { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] };
           }));
         } else if (event.type === 'scenario_created') {
+          // Make the new scenario appear in lists / selectors without forcing
+          // the user to leave the current tab. We invalidate the scenario
+          // queries so React Query refetches them in the background — the
+          // user's current view and state stay put.
+          qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
+          qc.invalidateQueries({ queryKey: ['scenario'] });
           setMessages((prev) => prev.map((m) => {
             if (m.id !== assistantId) return m;
             return { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: 'scenario_created', content: `Scenario created: ${event.name}` }] };
@@ -279,7 +302,7 @@ export default function ChatPanel({ modelId, onClose }) {
     );
 
     stopRef.current = stop;
-  }, [input, streaming, messages, modelId, mode]);
+  }, [input, streaming, messages, modelId, mode, qc]);
 
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -294,7 +317,7 @@ export default function ChatPanel({ modelId, onClose }) {
   };
 
   const clearChat = () => {
-    setMessages([messages[0]]);
+    setMessages([{ id: 'welcome', role: 'assistant', parts: [{ type: 'text', content: welcomeByMode[mode] }] }]);
   };
 
   const isThinking = streaming && messages[messages.length - 1]?.parts?.length === 0;
@@ -331,10 +354,10 @@ export default function ChatPanel({ modelId, onClose }) {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ color: 'white', fontWeight: typography.fontWeights.semibold, fontSize: typography.fontSizes.md, fontFamily: typography.fontFamily }}>
-            Bob AI
+            Bob AI · {mode === 'scenario' ? 'Scenario Agent' : 'Data Agent'}
           </div>
           <div style={{ color: colors.sidebarText, fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily }}>
-            CFO Companion · {streaming ? 'Thinking...' : 'Ready'}
+            {streaming ? 'Thinking...' : 'Ready'}
           </div>
         </div>
         <button
@@ -350,27 +373,6 @@ export default function ChatPanel({ modelId, onClose }) {
         >
           ×
         </button>
-      </div>
-
-      {/* Mode selector */}
-      <div style={{ padding: `${spacing.xs}px ${spacing.md}px`, background: colors.bgMuted, borderBottom: `1px solid ${colors.border}`, display: 'flex', gap: spacing.xs, alignItems: 'center' }}>
-        <span style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily }}>Mode:</span>
-        {['data', 'scenario'].map((m) => (
-          <button
-            key={m}
-            onClick={() => setMode(m)}
-            style={{
-              padding: `2px ${spacing.sm}px`, borderRadius: radius.full,
-              border: `1px solid ${mode === m ? colors.primary : colors.border}`,
-              background: mode === m ? colors.primaryLight : 'transparent',
-              color: mode === m ? colors.primary : colors.textSecondary,
-              fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
-              fontWeight: typography.fontWeights.medium, cursor: 'pointer', textTransform: 'capitalize',
-            }}
-          >
-            {m}
-          </button>
-        ))}
       </div>
 
       {/* Messages */}

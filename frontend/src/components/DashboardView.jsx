@@ -491,129 +491,186 @@ function formatRuleAdjustment(rule) {
   return `= ${(adj.value || 0).toLocaleString()}`;
 }
 
-function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
-  const [expanded, setExpanded] = useState(false);
-  const filterEntries = Object.entries(rule.filter_expr || {});
+/** Visual styling per rule type — drives the colored "header" pill. */
+const RULE_TYPE_STYLES = {
+  multiplier: { bg: '#dcfce7', text: '#065f46', border: '#86efac', label: 'Adjustment' },
+  offset:     { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: 'Offset' },
+  set_value:  { bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Override' },
+};
 
-  // When the parent sidebar is collapsed, show only name + impact in a tight
-  // single-line chip and suppress the per-card expand affordance.
+/** A single rule inside the dashboard's Scenario Assumptions sidebar.
+ *  Its appearance is driven entirely by the parent sidebar's expanded
+ *  state — no internal expand/collapse. When the sidebar is collapsed,
+ *  the card shrinks to just a colored title pill. When the sidebar is
+ *  expanded, the card renders the full reference-image layout (pill
+ *  header + bold title + IMPACT/NOTE grid + Edit/Delete actions). */
+function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
+  const style = RULE_TYPE_STYLES[rule.rule_type] || RULE_TYPE_STYLES.multiplier;
+  const filterEntries = Object.entries(rule.filter_expr || {});
+  const hasFilters = filterEntries.length > 0;
+
+  // Collapsed — tiny title pill, nothing else.
   if (!sidebarExpanded) {
     return (
       <div style={{
-        background: colors.bgCard, borderRadius: radius.sm,
-        border: `1px solid ${colors.border}`,
-        marginBottom: spacing.xs,
-        padding: `${spacing.xs}px ${spacing.sm}px`,
-        display: 'flex', alignItems: 'center', gap: spacing.xs,
-        minWidth: 0,
+        padding: `${spacing.xs}px 0`,
+        display: 'flex', alignItems: 'center',
       }}>
         <span style={{
-          flex: 1, minWidth: 0,
-          fontSize: typography.fontSizes.xs,
-          fontWeight: typography.fontWeights.medium, color: colors.textPrimary,
-          fontFamily: typography.fontFamily,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          display: 'inline-flex', alignItems: 'center',
+          padding: '5px 12px', borderRadius: radius.full,
+          background: style.bg, color: style.text,
+          border: `1px solid ${style.border}`,
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          fontWeight: typography.fontWeights.semibold,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          maxWidth: '100%',
         }}>
-          {rule.name}
-        </span>
-        <span style={{
-          fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.bold,
-          color: colors.textPrimary, fontFamily: typography.fontFamily,
-          flexShrink: 0,
-        }}>
-          {formatRuleAdjustment(rule)}
+          {rule.name || style.label}
         </span>
       </div>
     );
   }
 
+  // Derive a human-readable impact line: "+10.0% from 2026-01"
+  const impactText = (() => {
+    const adj = rule.adjustment || {};
+    let core;
+    if (rule.rule_type === 'multiplier') {
+      const pct = ((adj.factor ?? 1) - 1) * 100;
+      core = `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`;
+    } else if (rule.rule_type === 'offset') {
+      const v = adj.offset ?? 0;
+      core = v >= 0 ? `+${v.toLocaleString()}` : v.toLocaleString();
+    } else {
+      core = `= ${adj.value?.toLocaleString?.() ?? adj.value ?? '?'}`;
+    }
+    return rule.period_from ? `${core} from ${rule.period_from}` : core;
+  })();
+
+  const noteText = hasFilters
+    ? `Applied to ${filterEntries.map(([k, v]) =>
+        `${k} ${Array.isArray(v) ? v.slice(0, 3).join(', ') : v}`
+      ).join('; ')}.`
+    : `Applied to ${rule.target_field}.`;
+
+  // First filter summarized as a compact "scope" pill (e.g. "DACH · SaaS")
+  const scopePill = hasFilters
+    ? (Array.isArray(filterEntries[0][1])
+        ? filterEntries[0][1].slice(0, 3).join(' · ')
+        : String(filterEntries[0][1]))
+    : rule.target_field;
+
   return (
     <div style={{
-      background: colors.bgCard, borderRadius: radius.md,
+      background: colors.bgCard,
+      borderRadius: radius.lg,
       border: `1px solid ${colors.border}`,
+      padding: `${spacing.md}px ${spacing.md}px`,
       marginBottom: spacing.sm,
-      overflow: 'hidden',
+      boxShadow: shadows.sm,
     }}>
-      {/* Collapsed header — always visible */}
-      <div
-        onClick={() => setExpanded((v) => !v)}
-        style={{
-          padding: `${spacing.sm}px ${spacing.md}px`,
-          display: 'flex', alignItems: 'center', gap: spacing.sm,
-          cursor: 'pointer', userSelect: 'none',
-        }}
-      >
+      {/* Row 1 — type pill + scope pill + Edit/Delete (top-right) */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs, marginBottom: spacing.sm, flexWrap: 'wrap' }}>
         <span style={{
-          fontSize: 10, color: colors.textMuted, width: 10,
-          transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
-          transition: transitions.fast,
-        }}>&#x25B6;</span>
-        <span style={{
-          flex: 1, fontSize: typography.fontSizes.sm,
-          fontWeight: typography.fontWeights.medium, color: colors.textPrimary,
-          fontFamily: typography.fontFamily,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          display: 'inline-flex', alignItems: 'center',
+          padding: '3px 10px', borderRadius: radius.full,
+          background: style.bg, color: style.text,
+          border: `1px solid ${style.border}`,
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          fontWeight: typography.fontWeights.semibold,
+          whiteSpace: 'nowrap',
         }}>
-          {rule.name}
+          {style.label}
         </span>
         <span style={{
-          fontSize: typography.fontSizes.sm, fontWeight: typography.fontWeights.bold,
-          color: colors.textPrimary, fontFamily: typography.fontFamily,
-          flexShrink: 0,
+          display: 'inline-flex', alignItems: 'center',
+          padding: '3px 10px', borderRadius: radius.full,
+          background: colors.bgCard, color: colors.textSecondary,
+          border: `1px solid ${colors.border}`,
+          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+          fontWeight: typography.fontWeights.medium,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          maxWidth: 140,
         }}>
-          {formatRuleAdjustment(rule)}
+          {scopePill}
         </span>
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => onEdit(rule)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: colors.textSecondary, fontSize: typography.fontSizes.xs,
+            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+            padding: `2px 6px`,
+          }}
+        >
+          Edit
+        </button>
+        <button
+          onClick={() => onDelete(rule.id)}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: colors.danger, fontSize: typography.fontSizes.xs,
+            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+            padding: `2px 6px`,
+          }}
+        >
+          Delete
+        </button>
       </div>
 
-      {/* Expanded details */}
-      {expanded && (
-        <div style={{
-          padding: `0 ${spacing.md}px ${spacing.md}px`,
-          borderTop: `1px solid ${colors.border}`,
-          paddingTop: spacing.sm,
-        }}>
-          <div style={{
-            fontSize: typography.fontSizes.xs, color: colors.textMuted,
-            fontFamily: typography.fontFamily, marginBottom: spacing.xs,
-            textTransform: 'uppercase', letterSpacing: '0.05em',
+      {/* Row 2 — bold rule title */}
+      <h4 style={{
+        margin: `0 0 ${spacing.sm}px`,
+        fontSize: typography.fontSizes.md,
+        fontWeight: typography.fontWeights.bold,
+        color: colors.textPrimary,
+        fontFamily: typography.fontFamily,
+        lineHeight: 1.3,
+      }}>
+        {rule.name || `${style.label} on ${rule.target_field}`}
+      </h4>
+
+      {/* Row 3 — IMPACT / NOTE grid */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: spacing.md,
+        paddingTop: spacing.sm,
+        borderTop: `1px solid ${colors.border}`,
+      }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{
+            fontSize: 10, color: colors.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.08em',
+            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
           }}>
-            IMPACT: {formatRuleAdjustment(rule)}
-          </div>
-
-          {filterEntries.length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: spacing.xs }}>
-              {filterEntries.map(([col, vals]) => (
-                <span key={col} style={{
-                  fontSize: typography.fontSizes.xs, padding: '1px 6px',
-                  borderRadius: radius.full, background: colors.bgMuted,
-                  color: colors.textSecondary, fontFamily: typography.fontFamily,
-                  border: `1px solid ${colors.border}`,
-                }}>
-                  {col}: {vals.join(' / ')}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <div style={{
-            fontSize: typography.fontSizes.xs, color: colors.textMuted,
-            fontFamily: typography.fontFamily, marginBottom: spacing.xs,
+            Impact
+          </span>
+          <span style={{
+            fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm,
+            fontWeight: typography.fontWeights.semibold, color: colors.textPrimary,
           }}>
-            Target: {rule.target_field}
-          </div>
-
-          {rule.period_from && (
-            <div style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted, fontFamily: typography.fontFamily, marginBottom: spacing.xs }}>
-              Period: {rule.period_from}{rule.period_to ? ` to ${rule.period_to}` : '+'}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', gap: spacing.xs, marginTop: spacing.sm, justifyContent: 'flex-end' }}>
-            <Button variant="secondary" size="sm" onClick={() => onEdit(rule)}>Edit</Button>
-            <Button variant="secondary" size="sm" onClick={() => onDelete(rule.id)}>Delete</Button>
-          </div>
+            {impactText}
+          </span>
         </div>
-      )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
+          <span style={{
+            fontSize: 10, color: colors.textMuted,
+            textTransform: 'uppercase', letterSpacing: '0.08em',
+            fontFamily: typography.fontFamily, fontWeight: typography.fontWeights.medium,
+          }}>
+            Note
+          </span>
+          <span style={{
+            fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
+            color: colors.textSecondary, lineHeight: 1.4,
+          }}>
+            {noteText}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -621,13 +678,19 @@ function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
 // ---------------------------------------------------------------------------
 // Scenario Assumptions Sidebar
 // ---------------------------------------------------------------------------
-function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onToggle }) {
+function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onFormOpenChange }) {
   const { data: scenario } = useScenario(scenarioId);
   const [showRuleForm, setShowRuleForm] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
   const deleteRuleMut = useDeleteRule(scenarioId, modelId);
 
   const rules = scenario?.rules || [];
+
+  // Notify parent whenever a form becomes open/closed, so the parent aside
+  // can lock its hover-collapse behaviour while the user is editing.
+  useEffect(() => {
+    onFormOpenChange?.(showRuleForm || !!editingRule);
+  }, [showRuleForm, editingRule, onFormOpenChange]);
 
   const handleDeleteRule = useCallback((ruleId) => {
     deleteRuleMut.mutate(ruleId);
@@ -654,21 +717,8 @@ function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onTog
         color: colors.textPrimary, fontFamily: typography.fontFamily,
         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       }}>
-        Scenario Assumptions
+        {expanded ? 'Scenario Assumptions' : 'Rules'}
       </h3>
-      {onToggle && (
-        <button
-          onClick={(e) => { e.stopPropagation(); onToggle(); }}
-          title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            color: colors.textMuted, fontSize: 14, padding: 4,
-            fontFamily: typography.fontFamily,
-          }}
-        >
-          {expanded ? '\u00BB' : '\u00AB'}
-        </button>
-      )}
     </div>
   );
 
@@ -758,7 +808,11 @@ export default function DashboardView({ dashboardId, modelId }) {
   const [scenarioId, setScenarioId] = useState('');
   const [yearFilter, setYearFilter] = useState('');
   const [localPositions, setLocalPositions] = useState({});
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [sidebarHovered, setSidebarHovered] = useState(false);
+  // When a rule form is open inside the sidebar we lock it expanded so the
+  // user doesn't lose their in-progress edit by moving the mouse away.
+  const [sidebarFormOpen, setSidebarFormOpen] = useState(false);
+  const sidebarExpanded = sidebarHovered || sidebarFormOpen;
 
   // Collect year values from metadata. Looks for a dimension named "year" on any dataset.
   const availableYears = useMemo(() => {
@@ -953,16 +1007,19 @@ export default function DashboardView({ dashboardId, modelId }) {
         </div>
       </div>
 
-      {/* Right sidebar - Scenario Assumptions (collapsible) */}
+      {/* Right sidebar - Scenario Assumptions. Collapsed by default (just
+          shows rule title pills); expands on hover. Stays expanded while
+          any rule form is open so the user can edit without the sidebar
+          collapsing out from under them. */}
       <aside
-        onClick={() => { if (!sidebarExpanded) setSidebarExpanded(true); }}
+        onMouseEnter={() => setSidebarHovered(true)}
+        onMouseLeave={() => setSidebarHovered(false)}
         style={{
-          width: sidebarExpanded ? 320 : 170,
+          width: sidebarExpanded ? 340 : 180,
           flexShrink: 0,
           borderLeft: `1px solid ${colors.border}`,
           background: colors.bgCard,
           overflowY: 'auto',
-          cursor: sidebarExpanded ? 'default' : 'pointer',
           transition: 'width 0.2s ease',
         }}
       >
@@ -971,7 +1028,7 @@ export default function DashboardView({ dashboardId, modelId }) {
           scenarioId={scenarioId}
           metadata={metadata}
           expanded={sidebarExpanded}
-          onToggle={() => setSidebarExpanded((v) => !v)}
+          onFormOpenChange={setSidebarFormOpen}
         />
       </aside>
 

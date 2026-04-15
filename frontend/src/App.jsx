@@ -468,9 +468,27 @@ export default function App() {
 
   const hasDatasets = datasets.length > 0;
 
+  // Once per model-open, if a dashboard exists and the user hasn't
+  // navigated away from the default 'schema' landing yet, jump to the
+  // first dashboard automatically.
+  const autoRoutedModelRef = useRef(null);
+  useEffect(() => {
+    if (!selectedModelId) return;
+    if (autoRoutedModelRef.current === selectedModelId) return;
+    if (!dashboards || dashboards.length === 0) return;
+    if (activeTab !== 'schema') return;
+    autoRoutedModelRef.current = selectedModelId;
+    setActiveTab(`dashboard-${dashboards[0].id}`);
+  }, [selectedModelId, dashboards, activeTab]);
+
   const handleSelectModel = useCallback((id) => {
     setSelectedModelId(id);
-    if (id) setActiveTab('schema');
+    if (id) {
+      setActiveTab('schema');
+    } else {
+      // Reset auto-route memory so re-opening a model re-runs the jump.
+      autoRoutedModelRef.current = null;
+    }
   }, []);
 
   const handleUploadSuccess = useCallback(() => {

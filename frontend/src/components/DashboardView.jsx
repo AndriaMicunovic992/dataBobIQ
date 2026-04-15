@@ -415,20 +415,35 @@ function RuleForm({ scenarioId, modelId, metadata, onClose, editRule }) {
         </div>
       </div>
 
+      {/* Adjustment value — own row so it always has room */}
+      <div style={{ marginBottom: spacing.sm }}>
+        <label style={labelStyle}>
+          {ruleType === 'multiplier' ? 'Factor (e.g. 1.1 = +10%)' : ruleType === 'offset' ? 'Amount (+/-)' : 'Set to value'}
+        </label>
+        <input
+          style={inputStyle}
+          type="number"
+          step={ruleType === 'multiplier' ? '0.01' : '1000'}
+          placeholder={ruleType === 'multiplier' ? '1.10' : '50000'}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+      </div>
+
+      {/* Period From / Period To side-by-side */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.sm, marginBottom: spacing.sm }}>
-        <div>
-          <label style={labelStyle}>
-            {ruleType === 'multiplier' ? 'Factor (e.g. 1.1)' : ruleType === 'offset' ? 'Amount (+/-)' : 'Set to value'}
-          </label>
-          <input style={inputStyle} type="number" step={ruleType === 'multiplier' ? '0.01' : '1000'} placeholder={ruleType === 'multiplier' ? '1.10' : '50000'} value={value} onChange={(e) => setValue(e.target.value)} />
-        </div>
         <div>
           <label style={labelStyle}>Period From</label>
           <input style={inputStyle} type="month" value={periodFrom} onChange={(e) => setPeriodFrom(e.target.value)} />
         </div>
+        <div>
+          <label style={labelStyle}>Period To</label>
+          <input style={inputStyle} type="month" value={periodTo} onChange={(e) => setPeriodTo(e.target.value)} />
+        </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters — column selector and values stack vertically so each
+          has the full form width to work with. */}
       <div style={{ marginBottom: spacing.sm }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, marginBottom: spacing.xs }}>
           <label style={{ ...labelStyle, marginBottom: 0 }}>Filters</label>
@@ -439,26 +454,46 @@ function RuleForm({ scenarioId, modelId, metadata, onClose, editRule }) {
         {filters.map((f, idx) => {
           const dimValues = getDimValues(f.column);
           return (
-            <div key={idx} style={{ display: 'flex', gap: spacing.xs, alignItems: 'flex-start', marginBottom: spacing.xs, background: colors.bgCard, padding: spacing.xs, borderRadius: radius.sm, border: `1px solid ${colors.border}` }}>
-              <select style={{ ...inputStyle, width: 120, marginBottom: 0, flex: '0 0 120px' }} value={f.column} onChange={(e) => updateFilterColumn(idx, e.target.value)}>
-                <option value="">Column...</option>
-                {dimensions.map((d) => <option key={d.field} value={d.field}>{d.label || d.field}</option>)}
-              </select>
-              <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', gap: 3, maxHeight: 60, overflowY: 'auto' }}>
-                {f.column && dimValues.map((v) => {
-                  const selected = f.values.includes(String(v));
-                  return (
-                    <button key={v} onClick={() => toggleFilterValue(idx, String(v))} style={{
-                      padding: '1px 6px', fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily,
-                      borderRadius: radius.full, cursor: 'pointer', border: `1px solid ${selected ? colors.primary : colors.border}`,
-                      background: selected ? colors.primaryLight : colors.bgCard, color: selected ? colors.primary : colors.textSecondary,
-                    }}>
-                      {v}
-                    </button>
-                  );
-                })}
+            <div key={idx} style={{ marginBottom: spacing.xs, background: colors.bgCard, padding: spacing.sm, borderRadius: radius.sm, border: `1px solid ${colors.border}` }}>
+              {/* Column picker row */}
+              <div style={{ display: 'flex', gap: spacing.xs, alignItems: 'center', marginBottom: f.column ? spacing.xs : 0 }}>
+                <select style={{ ...inputStyle, marginBottom: 0, flex: 1 }} value={f.column} onChange={(e) => updateFilterColumn(idx, e.target.value)}>
+                  <option value="">Select column...</option>
+                  {dimensions.map((d) => <option key={d.field} value={d.field}>{d.label || d.field}</option>)}
+                </select>
+                <button
+                  onClick={() => removeFilter(idx)}
+                  title="Remove filter"
+                  aria-label="Remove filter"
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: colors.danger, padding: 4,
+                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
               </div>
-              <button onClick={() => removeFilter(idx)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.danger, fontSize: 12 }}>x</button>
+              {/* Value chips — full width, wraps freely */}
+              {f.column && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 120, overflowY: 'auto' }}>
+                  {dimValues.map((v) => {
+                    const selected = f.values.includes(String(v));
+                    return (
+                      <button key={v} onClick={() => toggleFilterValue(idx, String(v))} style={{
+                        padding: '3px 8px', fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily,
+                        borderRadius: radius.full, cursor: 'pointer', border: `1px solid ${selected ? colors.primary : colors.border}`,
+                        background: selected ? colors.primaryLight : colors.bgCard, color: selected ? colors.primary : colors.textSecondary,
+                      }}>
+                        {v}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
@@ -755,15 +790,18 @@ function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onFor
             No rules yet. Add an assumption above.
           </p>
         ) : (
-          rules.map((rule) => (
-            <RuleCard
-              key={rule.id}
-              rule={rule}
-              onDelete={handleDeleteRule}
-              onEdit={handleEditRule}
-              sidebarExpanded={expanded}
-            />
-          ))
+          rules
+            // Hide the rule currently being edited — only the form should be visible for it.
+            .filter((rule) => !editingRule || rule.id !== editingRule.id)
+            .map((rule) => (
+              <RuleCard
+                key={rule.id}
+                rule={rule}
+                onDelete={handleDeleteRule}
+                onEdit={handleEditRule}
+                sidebarExpanded={expanded}
+              />
+            ))
         )}
       </div>
     </div>
@@ -993,7 +1031,10 @@ export default function DashboardView({ dashboardId, modelId }) {
         onMouseEnter={() => setSidebarHovered(true)}
         onMouseLeave={() => setSidebarHovered(false)}
         style={{
-          width: sidebarExpanded ? 340 : 180,
+          // When a rule form is open, give inputs serious room. When
+          // hovered without a form, show the full card layout. Otherwise
+          // collapse to the title-pill rail.
+          width: sidebarFormOpen ? 440 : sidebarExpanded ? 340 : 180,
           flexShrink: 0,
           borderLeft: `1px solid ${colors.border}`,
           background: colors.bgCard,

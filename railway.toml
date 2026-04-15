@@ -5,3 +5,7 @@ dockerfilePath = "Dockerfile"
 [deploy]
 healthcheckPath = "/api/health"
 healthcheckTimeout = 30
+
+[[mounts]]
+source = "databobiq-data"
+mountPath = "/app/data"

@@ -21,6 +21,18 @@ class ScenarioRuleCreate(BaseModel):
     distribution: str = "proportional"
 
 
+class ScenarioRuleUpdate(BaseModel):
+    name: str | None = None
+    rule_type: str | None = None
+    target_field: str | None = None
+    dataset_id: str | None = None
+    adjustment: dict | None = None
+    filter_expr: dict | None = None
+    period_from: str | None = None
+    period_to: str | None = None
+    distribution: str | None = None
+
+
 class ScenarioCreate(BaseModel):
     name: str
     dataset_id: str | None = None  # optional — scenarios are model-level

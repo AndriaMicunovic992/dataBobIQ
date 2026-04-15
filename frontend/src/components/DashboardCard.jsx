@@ -11,23 +11,27 @@ function formatBigNum(val) {
   return Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-export default function DashboardCard({ widget, scenarioId }) {
+export default function DashboardCard({ widget, scenarioId, yearFilter }) {
   const config = widget.config || {};
 
   const apiConfig = useMemo(() => {
     if (!config.dataset_id || !config.measures?.length) return null;
+    const filters = { ...(config.filters || {}) };
+    if (yearFilter) {
+      filters.year = [String(yearFilter)];
+    }
     return {
       model_id: config.model_id,
       dataset_id: config.dataset_id,
       row_dimensions: [],
       column_dimension: null,
       measures: config.measures,
-      filters: config.filters || {},
+      filters,
       scenario_ids: scenarioId ? [scenarioId] : [],
       join_dimensions: config.join_dimensions || undefined,
       limit: 1,
     };
-  }, [config, scenarioId]);
+  }, [config, scenarioId, yearFilter]);
 
   const { data, isLoading } = usePivot(apiConfig);
 

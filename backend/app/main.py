@@ -39,6 +39,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Upload dir: %s", upload_dir.resolve())
     logger.info("Data dir:   %s", data_dir.resolve())
 
+    # Diagnostic: warn if data_dir is not on the Railway persistent volume.
+    # Railway mounts the volume at /app/data (see railway.toml). If data_dir
+    # resolves to anything else, parquet files will be lost on every redeploy.
+    resolved_data_dir = str(data_dir.resolve())
+    if resolved_data_dir != "/app/data" and Path("/app/data").exists():
+        logger.warning(
+            "DATA_DIR resolves to %s but Railway volume is mounted at /app/data. "
+            "Parquet files written outside the mount will be LOST on redeploy. "
+            "Set DATA_DIR=/app/data in your Railway environment.",
+            resolved_data_dir,
+        )
+
     # Re-register all active datasets' parquet files in DuckDB
     # (views are in-memory and lost on restart)
     try:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -790,7 +791,7 @@ async def _execute_tool(
                 await db.commit()
                 await db.refresh(scenario)
 
-                # Trigger recompute
+                # Trigger recompute (off event loop to avoid blocking SSE)
                 try:
                     from app.services.scenario_engine import recompute_scenario as recompute_svc
                     from app.config import settings as app_settings
@@ -819,7 +820,8 @@ async def _execute_tool(
                         }
                         for rl in sc_obj.rules
                     ]
-                    recompute_svc(
+                    await asyncio.to_thread(
+                        recompute_svc,
                         scenario_id=scenario.id, rules=rule_dicts,
                         model_id=model_id, data_dir=app_settings.data_dir,
                         dataset_ids=ds_ids,
@@ -880,7 +882,7 @@ async def _execute_tool(
                     db.add(rule)
                 await db.commit()
 
-                # Trigger recompute
+                # Trigger recompute (off event loop to avoid blocking SSE)
                 try:
                     from app.services.scenario_engine import recompute_scenario as recompute_svc
                     from app.config import settings as app_settings
@@ -907,7 +909,8 @@ async def _execute_tool(
                         }
                         for rl in sc_obj.rules
                     ]
-                    recompute_svc(
+                    await asyncio.to_thread(
+                        recompute_svc,
                         scenario_id=scenario_id_input, rules=rule_dicts,
                         model_id=scenario.model_id, data_dir=app_settings.data_dir,
                         dataset_ids=ds_ids,
@@ -1390,6 +1393,9 @@ async def stream_chat(
                 "content": tool_results,
             })
 
+        # Signal completion. The SSE generator wrapper also emits [DONE],
+        # but this structured event lets the frontend set streaming=false
+        # with a proper type check before the connection closes.
         yield json.dumps({"event": "done", "data": None})
 
     except Exception as exc:

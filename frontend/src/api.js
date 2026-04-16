@@ -123,35 +123,52 @@ export function streamChat(modelId, body, onEvent) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
+      let doneFired = false;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          onEvent({ type: 'done' });
-          break;
-        }
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop(); // Keep incomplete last line in buffer
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // Keep incomplete last line in buffer
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const raw = line.slice(6).trim();
-            if (raw === '[DONE]') {
-              onEvent({ type: 'done' });
-              return;
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const raw = line.slice(6).trim();
+              if (raw === '[DONE]') {
+                if (!doneFired) {
+                  doneFired = true;
+                  onEvent({ type: 'done' });
+                }
+                // Don't return — let the reader drain so the connection closes cleanly
+                continue;
+              }
+              try {
+                const parsed = JSON.parse(raw);
+                // Deduplicate done events (backend sends both structured done + [DONE])
+                if (parsed.type === 'done') {
+                  if (!doneFired) {
+                    doneFired = true;
+                    onEvent(parsed);
+                  }
+                  continue;
+                }
+                onEvent(parsed);
+              } catch {
+                // Non-JSON data line, skip
+              }
             }
-            try {
-              const parsed = JSON.parse(raw);
-              onEvent(parsed);
-            } catch {
-              // Non-JSON data line, skip
-            }
-          } else if (line.startsWith('event: ')) {
-            // SSE event type — handled via data lines
           }
         }
+      } finally {
+        reader.releaseLock();
+      }
+
+      // Stream ended without a done event — fire one so the UI resets
+      if (!doneFired) {
+        onEvent({ type: 'done' });
       }
     })
     .catch((err) => {

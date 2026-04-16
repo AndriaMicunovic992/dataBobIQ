@@ -44,6 +44,14 @@ _DATA_TOOLS = [
                     ),
                     "additionalProperties": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
                 },
+                "order_by": {
+                    "type": "string",
+                    "description": (
+                        "Column to order results by. Prefix with '-' for descending. "
+                        "Default: descending by aggregated value. "
+                        "Example: 'period' for chronological, '-sum_amount' for largest first."
+                    ),
+                },
             },
         },
     },
@@ -237,6 +245,14 @@ _SCENARIO_TOOLS = [
                         "Example: {\"period\": \"month\"} groups a date column by month."
                     ),
                     "additionalProperties": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
+                },
+                "order_by": {
+                    "type": "string",
+                    "description": (
+                        "Column to order results by. Prefix with '-' for descending. "
+                        "Default: descending by aggregated value. "
+                        "Example: 'period' for chronological, '-sum_amount' for largest first."
+                    ),
                 },
             },
         },
@@ -590,12 +606,25 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
 
-    # GROUP BY
+    # GROUP BY + ORDER BY
     if group_exprs:
         sql += f" GROUP BY {', '.join(group_exprs)}"
-        # Order chronologically when date_trunc is used, otherwise by value desc.
-        if date_trunc and len(group_by) == 1 and group_by[0] in date_trunc:
-            sql += f' ORDER BY "{group_by[0]}" ASC'
+
+        order_by_raw = tool_input.get("order_by")
+        if order_by_raw and isinstance(order_by_raw, str):
+            desc = order_by_raw.startswith("-")
+            col = order_by_raw.lstrip("-")
+            agg_alias = f"{aggregation.lower()}_{value_column}"
+            if col == agg_alias:
+                sql += f" ORDER BY {agg_alias} {'DESC' if desc else 'ASC'}"
+            elif _validate_identifier(col):
+                sql += f' ORDER BY "{col}" {"DESC" if desc else "ASC"}'
+        elif date_trunc:
+            trunc_cols = [c for c in group_by if c in date_trunc]
+            if trunc_cols:
+                sql += f' ORDER BY "{trunc_cols[0]}" ASC'
+            else:
+                sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
         else:
             sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
 
@@ -1114,11 +1143,18 @@ ONBOARDING FLOW (when message is "__ONBOARDING_START__"):
    - Business terms: "What do your team call the main cost categories?"
 5. Number the questions so the user can reply to specific ones
 
+QUERY STRATEGY — PUSH EVERYTHING TO DuckDB:
+The analytics engine (DuckDB) is powerful. Always make the query do the work — never
+fetch raw rows and aggregate them yourself in text.
+- For time-based breakdowns, use date_trunc on date columns (e.g. date_trunc: {{"period": "month"}})
+- Check <dimensions> for column types: type="date" columns support date_trunc
+
 TOOL USAGE PATTERNS:
 query_data: Use BEFORE saving knowledge to verify claims. Also use when the user asks
 "what does X look like" or "show me the data for Y."
 - Always include a group_by — don't just aggregate everything
 - Limit to relevant columns — don't dump entire tables
+- Use date_trunc for time-based grouping (monthly, quarterly, yearly)
 
 list_dimension_values: Use when you need to see what values exist in a column.
 - Use with search parameter when looking for specific values
@@ -1223,11 +1259,30 @@ BEHAVIORAL RULES:
    When creating multiple rules for a scenario, submit them ALL in a single
    create_scenario call. Never split rules across multiple calls.
 
+QUERY STRATEGY — PUSH EVERYTHING TO DuckDB:
+The analytics engine (DuckDB) is extremely powerful. ALWAYS make the query do the work.
+NEVER fetch raw rows and aggregate them in your text response.
+
+- Time-based questions ("monthly revenue", "quarterly costs", "yearly trend"):
+  Use date_trunc on the date column. Example: group_by: ["period"], date_trunc: {{"period": "month"}}
+  This returns one row per month with the correct aggregate — not hundreds of raw rows.
+- Comparisons ("revenue vs COGS", "this year vs last"): Use filters and group_by to get
+  exactly the comparison rows you need. Don't fetch everything and filter in text.
+- Top-N questions ("biggest expense categories"): Use group_by and the default ORDER BY
+  (descending by aggregated value) — the first rows are the top items.
+- The query already limits to 50 rows. If you still get too many rows, add filters or
+  use coarser date_trunc granularity.
+
+Check <dimensions> to see column types. Columns with type="date" or type="timestamp"
+support date_trunc. Columns with role="time" are date/period columns.
+
 TOOL USAGE PATTERNS:
 query_data: Primary tool for answering "how much", "what's the total", "compare X and Y"
 - Always group by relevant dimensions
 - Use filters from the glossary/knowledge for business terms
 - Set dataset_name when querying non-default tables
+- Use date_trunc for ANY time-based aggregation (monthly, quarterly, yearly)
+- Use order_by when you need chronological or custom ordering
 
 list_dimension_values: Use to find filter values before creating rules
 - Check what values exist before assuming

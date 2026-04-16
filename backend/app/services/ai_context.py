@@ -96,7 +96,11 @@ async def build_ai_context(
             parts.append("    <dimensions>")
             for dim in dimensions:
                 display_name = dim.canonical_name or dim.source_name
-                attrs = f'name="{_xml_escape(display_name)}" cardinality="{dim.unique_count or "?"}"'
+                attrs = (
+                    f'name="{_xml_escape(display_name)}" '
+                    f'type="{dim.data_type}" role="{dim.column_role}" '
+                    f'cardinality="{dim.unique_count or "?"}"'
+                )
                 # Try to fetch top values from DuckDB (lightweight query)
                 top_vals = ""
                 try:

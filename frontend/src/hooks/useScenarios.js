@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   listScenarios,
   getScenario,
+  getScenarioSummaries,
   createScenario,
   deleteScenario,
   addRule,
@@ -17,6 +18,19 @@ export function useScenarios(modelId) {
     queryKey: ['scenarios', modelId],
     queryFn: () => listScenarios(modelId),
     enabled: !!modelId,
+  });
+}
+
+// Cockpit payload for the Agent Workspace home view: name, color, rule
+// count, headline delta, and a short sparkline per scenario.
+export function useScenarioSummaries(modelId) {
+  return useQuery({
+    queryKey: ['scenario-summaries', modelId],
+    queryFn: () => getScenarioSummaries(modelId),
+    enabled: !!modelId,
+    // The payload depends on the scenario compute having run — invalidate
+    // whenever scenarios or rules change so the cockpit refreshes.
+    staleTime: 30_000,
   });
 }
 

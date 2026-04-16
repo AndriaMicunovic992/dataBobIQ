@@ -11,6 +11,9 @@ import SchemaView from './components/SchemaView.jsx';
 import DashboardView from './components/DashboardView.jsx';
 import ChatPanel from './components/ChatPanel.jsx';
 import KnowledgePanel from './components/KnowledgePanel.jsx';
+import AgentWorkspace from './components/AgentWorkspace/index.jsx';
+
+const AGENT_WORKSPACE_TAB = 'agent-workspace';
 
 const SCHEMA_TAB = { id: 'schema', label: 'Data Model', icon: '\u2B21' };
 const KNOWLEDGE_TAB = { id: 'knowledge', label: 'Knowledge', icon: '\u25C7' };
@@ -547,10 +550,32 @@ export default function App() {
       );
     }
 
+    // Agent Workspace — full-screen takeover. Rendered inside main so the
+    // sidebar rail (and the rest of the app chrome) stays put.
+    if (activeTab === AGENT_WORKSPACE_TAB) {
+      return (
+        <AgentWorkspace
+          modelId={selectedModelId}
+          onExit={() => setActiveTab(dashboards?.[0] ? `dashboard-${dashboards[0].id}` : 'schema')}
+          onOpenDashboard={() => {
+            // Phase 1: just route back to the first dashboard. Scenario
+            // preselection on the dashboard side lands in Phase 2.
+            if (dashboards?.[0]) setActiveTab(`dashboard-${dashboards[0].id}`);
+          }}
+        />
+      );
+    }
+
     // Dashboard tab
     if (activeTab.startsWith('dashboard-')) {
       const dashboardId = activeTab.replace('dashboard-', '');
-      return <DashboardView dashboardId={dashboardId} modelId={selectedModelId} />;
+      return (
+        <DashboardView
+          dashboardId={dashboardId}
+          modelId={selectedModelId}
+          onOpenAgentWorkspace={() => setActiveTab(AGENT_WORKSPACE_TAB)}
+        />
+      );
     }
 
     switch (activeTab) {
@@ -603,6 +628,14 @@ export default function App() {
           modelId={selectedModelId}
           onClose={() => setChatOpen(false)}
           mode={MODELLING_TABS.has(activeTab) ? 'data' : 'scenario'}
+          onExpand={
+            MODELLING_TABS.has(activeTab)
+              ? undefined
+              : () => {
+                  setChatOpen(false);
+                  setActiveTab(AGENT_WORKSPACE_TAB);
+                }
+          }
         />
       )}
 

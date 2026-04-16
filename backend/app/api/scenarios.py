@@ -12,20 +12,37 @@ from sqlalchemy.orm import selectinload
 
 from app.config import settings
 from app.database import get_db
-from app.models.metadata import Dataset, DatasetRelationship, Model, Scenario, ScenarioRule
+from app.models.metadata import (
+    Dataset,
+    DatasetColumn,
+    DatasetRelationship,
+    Model,
+    Scenario,
+    ScenarioRule,
+)
 from app.schemas.scenarios import (
     ScenarioCreate,
+    ScenarioHeadline,
     ScenarioResponse,
     ScenarioRuleCreate,
     ScenarioRuleResponse,
     ScenarioRuleUpdate,
+    ScenarioSummariesResponse,
+    ScenarioSummary,
     ScenarioUpdate,
+    SparklinePoint,
 )
 from app.services.scenario_engine import (
     recompute_scenario as recompute_scenario_svc,
     compute_variance,
     execute_waterfall,
 )
+
+# Canonical-name preference order for picking a "headline" measure and a
+# sparkline time dimension when the caller hasn't said which to use. These
+# are heuristics for the Phase 1 summaries endpoint.
+_HEADLINE_MEASURE_CANDIDATES = ("amount", "revenue", "net_amount", "value", "total")
+_TIME_DIM_CANDIDATES = ("year_month", "fiscal_period", "period", "month", "year")
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +185,208 @@ async def list_scenarios(
     )
     scenarios = result.scalars().unique().all()
     return [ScenarioResponse.model_validate(s) for s in scenarios]
+
+
+# ---------------------------------------------------------------------------
+# Agent Workspace: per-model scenario summaries
+#
+# Returns everything the "scenario cockpit" needs in one round-trip:
+# name, color, rule count, a headline delta vs. actuals, and a 12-period
+# sparkline. The frontend reads this to paint the ScenarioCard grid on the
+# AgentWorkspace home view.
+#
+# Headline measure and sparkline time dimension are picked heuristically
+# from the model's active dataset columns. If a scenario hasn't been
+# computed yet (no overlay parquet), we surface it with a null headline
+# rather than forcing an auto-recompute — keeping the endpoint cheap.
+# ---------------------------------------------------------------------------
+
+
+def _pick_summary_columns(columns: list[DatasetColumn]) -> tuple[str | None, str | None]:
+    """From a dataset's columns, pick a headline measure and a time dimension.
+
+    Prefers canonical names from the candidate lists, falls back to the
+    first measure / first date-like dimension. Returns (measure, time_dim)
+    — either may be None if nothing suitable exists.
+    """
+    measures = [c for c in columns if c.column_role == "measure"]
+    dims = [c for c in columns if c.column_role == "dimension"]
+
+    def _pick(cols: list[DatasetColumn], candidates: tuple[str, ...]) -> str | None:
+        by_canonical = {(c.canonical_name or "").lower(): c for c in cols if c.canonical_name}
+        for cand in candidates:
+            hit = by_canonical.get(cand)
+            if hit:
+                return hit.canonical_name or hit.source_name
+        return None
+
+    measure = _pick(measures, _HEADLINE_MEASURE_CANDIDATES)
+    if measure is None and measures:
+        measure = measures[0].canonical_name or measures[0].source_name
+
+    time_dim = _pick(dims, _TIME_DIM_CANDIDATES)
+    if time_dim is None:
+        # Last-resort fallback: any dimension whose name hints at time
+        for d in dims:
+            name = (d.canonical_name or d.source_name or "").lower()
+            if any(token in name for token in ("month", "period", "year", "date", "quarter")):
+                time_dim = d.canonical_name or d.source_name
+                break
+
+    return measure, time_dim
+
+
+def _compute_scenario_summary(
+    scenario: Scenario,
+    dataset_id: str,
+    measure: str | None,
+    time_dim: str | None,
+    model_id: str,
+    data_dir: str,
+) -> tuple[ScenarioHeadline | None, list[SparklinePoint]]:
+    """Run compute_variance for one scenario and shape the output.
+
+    Swallows failures and returns (None, []) so one broken scenario can't
+    wreck the whole cockpit payload.
+    """
+    if measure is None or time_dim is None:
+        return None, []
+
+    try:
+        variance = compute_variance(
+            dataset_id=dataset_id,
+            scenario_id=scenario.id,
+            group_by=[time_dim],
+            value_field=measure,
+            filters=None,
+            model_id=model_id,
+            data_dir=data_dir,
+        )
+    except Exception as exc:
+        logger.info(
+            "summaries: skipping headline for scenario %s (%s)", scenario.id, exc
+        )
+        return None, []
+
+    headline = ScenarioHeadline(
+        measure=measure,
+        baseline=float(variance.get("total_actual") or 0.0),
+        scenario=float(variance.get("total_scenario") or 0.0),
+        delta=float(variance.get("total_delta") or 0.0),
+        delta_pct=variance.get("total_delta_pct"),
+    )
+
+    # Turn the variance groups into a time-ordered sparkline. We sort by the
+    # period label itself, which works for ISO-ish strings (2026-01, 2026Q1,
+    # 2026, etc.) and for integers.
+    groups = variance.get("groups") or []
+    points: list[SparklinePoint] = []
+    for g in groups:
+        period_val = (g.get("group") or {}).get(time_dim)
+        if period_val is None:
+            continue
+        points.append(
+            SparklinePoint(
+                period=str(period_val),
+                baseline=float(g.get("actual") or 0.0),
+                scenario=float(g.get("scenario") or 0.0),
+            )
+        )
+    points.sort(key=lambda p: p.period)
+    # Cap at a reasonable sparkline length.
+    if len(points) > 24:
+        points = points[-24:]
+
+    return headline, points
+
+
+@router.get(
+    "/models/{model_id}/scenarios/summaries",
+    response_model=ScenarioSummariesResponse,
+)
+async def list_scenario_summaries(
+    model_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> ScenarioSummariesResponse:
+    """Return a cockpit-ready summary for every scenario in a model.
+
+    Used by the Agent Workspace home view to render scenario cards without
+    the frontend firing one pivot request per scenario.
+    """
+    # 1. Validate model exists
+    result = await db.execute(select(Model).where(Model.id == model_id))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
+
+    # 2. Load all scenarios with their rules
+    result = await db.execute(
+        select(Scenario)
+        .options(selectinload(Scenario.rules))
+        .where(Scenario.model_id == model_id)
+        .order_by(Scenario.created_at.desc())
+    )
+    scenarios = result.scalars().unique().all()
+
+    # 3. Pick the target dataset + its columns. Headline and sparkline both
+    #    live on the first active dataset. Multi-dataset models will still
+    #    get working cards, but the heuristic measure will come from only
+    #    one dataset in Phase 1.
+    ds_result = await db.execute(
+        select(Dataset)
+        .where(Dataset.model_id == model_id, Dataset.status == "active")
+        .order_by(Dataset.id)
+    )
+    active_datasets = list(ds_result.scalars().all())
+
+    measure: str | None = None
+    time_dim: str | None = None
+    primary_dataset_id: str | None = None
+
+    if active_datasets:
+        primary = active_datasets[0]
+        primary_dataset_id = primary.id
+        col_result = await db.execute(
+            select(DatasetColumn).where(DatasetColumn.dataset_id == primary.id)
+        )
+        cols = list(col_result.scalars().all())
+        measure, time_dim = _pick_summary_columns(cols)
+
+    # 4. For each scenario compute headline + sparkline (off the event loop)
+    summaries: list[ScenarioSummary] = []
+    for scenario in scenarios:
+        headline: ScenarioHeadline | None = None
+        sparkline: list[SparklinePoint] = []
+
+        target_dataset_id = scenario.dataset_id or primary_dataset_id
+        if target_dataset_id and measure and time_dim:
+            headline, sparkline = await asyncio.to_thread(
+                _compute_scenario_summary,
+                scenario,
+                target_dataset_id,
+                measure,
+                time_dim,
+                model_id,
+                settings.data_dir,
+            )
+
+        summaries.append(
+            ScenarioSummary(
+                id=scenario.id,
+                name=scenario.name,
+                color=scenario.color,
+                rule_count=len(scenario.rules or []),
+                created_at=scenario.created_at,
+                headline=headline,
+                sparkline=sparkline,
+            )
+        )
+
+    return ScenarioSummariesResponse(
+        model_id=model_id,
+        measure=measure,
+        period_field=time_dim,
+        scenarios=summaries,
+    )
 
 
 @router.get("/scenarios/{scenario_id}", response_model=ScenarioResponse)

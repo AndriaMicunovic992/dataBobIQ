@@ -811,7 +811,7 @@ function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onFor
 // ---------------------------------------------------------------------------
 // Main dashboard view
 // ---------------------------------------------------------------------------
-export default function DashboardView({ dashboardId, modelId }) {
+export default function DashboardView({ dashboardId, modelId, onOpenAgentWorkspace }) {
   const { data: dashboard, isLoading } = useDashboard(dashboardId);
   const { data: scenarios = [] } = useScenarios(modelId);
   const { data: metadata } = useMetadata(modelId);
@@ -964,6 +964,11 @@ export default function DashboardView({ dashboardId, modelId }) {
             </select>
           </div>
 
+          {onOpenAgentWorkspace && (
+            <Button variant="secondary" size="sm" onClick={onOpenAgentWorkspace}>
+              Ask Bob ⤢
+            </Button>
+          )}
           <Button variant="primary" size="sm" onClick={() => setEditingWidget('new')}>
             + Add Widget
           </Button>

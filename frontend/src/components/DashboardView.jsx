@@ -966,7 +966,7 @@ export default function DashboardView({ dashboardId, modelId, onOpenAgentWorkspa
 
           {onOpenAgentWorkspace && (
             <Button variant="secondary" size="sm" onClick={onOpenAgentWorkspace}>
-              Ask Bob ⤢
+              Decision Intelligence ⤢
             </Button>
           )}
           <Button variant="primary" size="sm" onClick={() => setEditingWidget('new')}>

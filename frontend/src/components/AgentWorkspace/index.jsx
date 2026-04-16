@@ -11,12 +11,6 @@ import PromptBar from './PromptBar.jsx';
  * Full-screen Agent Workspace route. Owns tab state via `useWorkspaceTabs`
  * (persisted in sessionStorage for 24h), and routes rendering between the
  * Home cockpit and thread-specific Conversation+Canvas layouts.
- *
- * Props:
- *   - modelId: required, selected model
- *   - onExit: called when the user clicks the workspace's exit chip
- *   - onOpenDashboard: bubble-up to the app shell when the user jumps
- *     from a scenario card to its dashboard (parent decides how to route).
  */
 export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
   const {
@@ -30,7 +24,6 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
     openThread(init);
   }, [openThread]);
 
-  // Home-level prompt: any freeform question seeds a new thread.
   const handleHomePrompt = useCallback((text) => {
     handleOpenThread({
       title: text.length > 40 ? `${text.slice(0, 40)}…` : text,
@@ -38,6 +31,12 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
       seedMessage: text,
     });
   }, [handleOpenThread]);
+
+  const handleRemoveArtifact = useCallback((tabId, artifactId) => {
+    updateTab(tabId, (t) => ({
+      artifacts: (t.artifacts || []).filter((a) => a.id !== artifactId),
+    }));
+  }, [updateTab]);
 
   return (
     <div style={{
@@ -65,7 +64,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
               />
             </div>
             <PromptBar
-              placeholder="Ask Bob about your scenarios..."
+              placeholder="Ask a question about your scenarios..."
               onSubmit={handleHomePrompt}
             />
           </>
@@ -74,6 +73,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
             tab={activeTab}
             modelId={modelId}
             onUpdateTab={updateTab}
+            onRemoveArtifact={(artifactId) => handleRemoveArtifact(activeTab.id, artifactId)}
           />
         )}
       </div>
@@ -81,8 +81,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
   );
 }
 
-function ThreadLayout({ tab, modelId, onUpdateTab }) {
-  // 360px narrow chat column + flex canvas.
+function ThreadLayout({ tab, modelId, onUpdateTab, onRemoveArtifact }) {
   return (
     <div style={{
       flex: 1, minHeight: 0,
@@ -95,7 +94,7 @@ function ThreadLayout({ tab, modelId, onUpdateTab }) {
         modelId={modelId}
         onUpdateTab={onUpdateTab}
       />
-      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
         <div style={{
           padding: `${spacing.sm}px ${spacing.xl}px`,
           borderBottom: `1px solid ${colors.border}`,
@@ -103,10 +102,11 @@ function ThreadLayout({ tab, modelId, onUpdateTab }) {
           fontSize: typography.fontSizes.sm,
           color: colors.textSecondary,
           fontFamily: typography.fontFamily,
+          flexShrink: 0,
         }}>
           Canvas · {tab.title}
         </div>
-        <Canvas tab={tab} />
+        <Canvas tab={tab} onRemoveArtifact={onRemoveArtifact} />
       </div>
     </div>
   );

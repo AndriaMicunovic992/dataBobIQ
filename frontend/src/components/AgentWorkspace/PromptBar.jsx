@@ -9,7 +9,7 @@ import { colors, spacing, radius, typography, shadows, inputStyle } from '../../
  * pre-seeding from a suggestion chip), otherwise we manage it internally.
  */
 export default function PromptBar({
-  placeholder = 'Ask Bob about your scenarios...',
+  placeholder = 'Ask a question about your scenarios...',
   onSubmit,
   disabled = false,
   initialValue = '',

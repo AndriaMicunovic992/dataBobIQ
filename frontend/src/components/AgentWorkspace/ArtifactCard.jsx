@@ -1,11 +1,10 @@
 import { colors, spacing, radius, typography, shadows, transitions } from '../../theme.js';
 
 /**
- * Wrapper for a single canvas artifact (a chart, a table, a commentary
- * draft). Provides a title bar with Pin / Export / Share affordances — all
- * stubbed as toast for Phase 1, wired for real in Phase 2.
+ * Wrapper for a single canvas artifact. Title bar with Pin / Export / Share
+ * (Phase 2 stubs) and a Remove button to dismiss the card from the canvas.
  */
-export default function ArtifactCard({ title, subtitle, children, onPin, onExport, onShare }) {
+export default function ArtifactCard({ title, subtitle, children, onPin, onExport, onShare, onRemove }) {
   return (
     <div style={{
       background: colors.bgCard,
@@ -47,7 +46,23 @@ export default function ArtifactCard({ title, subtitle, children, onPin, onExpor
         </div>
         <ToolbarButton label="Pin" onClick={onPin} />
         <ToolbarButton label="Export" onClick={onExport} />
-        <ToolbarButton label="Share" onClick={onShare} />
+        {onRemove && (
+          <button
+            onClick={onRemove}
+            title="Remove from canvas"
+            style={{
+              background: 'none', border: 'none',
+              cursor: 'pointer', color: colors.textMuted,
+              fontSize: 16, lineHeight: 1, padding: 2,
+              borderRadius: radius.sm,
+              transition: transitions.fast,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = colors.danger; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textMuted; }}
+          >
+            ×
+          </button>
+        )}
       </div>
       {/* Body */}
       <div style={{ padding: spacing.md }}>

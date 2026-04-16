@@ -6,7 +6,7 @@ import ArtifactCard from './ArtifactCard.jsx';
  * from tool calls (query_data tables, scenario comparisons, KPI values)
  * that the ConversationPane pushes onto `tab.artifacts`.
  */
-export default function Canvas({ tab }) {
+export default function Canvas({ tab, onRemoveArtifact }) {
   const artifacts = tab.artifacts || [];
 
   const stub = (label) => () => {
@@ -63,7 +63,7 @@ export default function Canvas({ tab }) {
           subtitle={a.subtitle}
           onPin={stub('Pin to dashboard')}
           onExport={stub('Export')}
-          onShare={stub('Share')}
+          onRemove={() => onRemoveArtifact?.(a.id)}
         >
           <ArtifactBody content={a.content} />
         </ArtifactCard>
@@ -74,7 +74,6 @@ export default function Canvas({ tab }) {
 
 /** Render artifact content — tries table layout for row data, otherwise JSON. */
 function ArtifactBody({ content }) {
-  // Detect tabular data: array of objects, or {rows: [...], columns: [...]}
   const rows = Array.isArray(content)
     ? content
     : (content?.rows && Array.isArray(content.rows)) ? content.rows : null;
@@ -82,7 +81,7 @@ function ArtifactBody({ content }) {
   if (rows && rows.length > 0 && typeof rows[0] === 'object') {
     const cols = content?.columns || Object.keys(rows[0]);
     return (
-      <div style={{ overflowX: 'auto', maxHeight: 400 }}>
+      <div style={{ overflowX: 'auto', maxHeight: 400, overflowY: 'auto' }}>
         <table style={{
           width: '100%', borderCollapse: 'collapse',
           fontSize: typography.fontSizes.xs,
@@ -135,7 +134,6 @@ function ArtifactBody({ content }) {
     );
   }
 
-  // Scalar or unrecognized — show as formatted JSON
   const display = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
   return (
     <pre style={{

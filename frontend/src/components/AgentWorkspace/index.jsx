@@ -7,11 +7,6 @@ import ConversationPane from './ConversationPane.jsx';
 import Canvas from './Canvas.jsx';
 import PromptBar from './PromptBar.jsx';
 
-/**
- * Full-screen Agent Workspace route. Owns tab state via `useWorkspaceTabs`
- * (persisted in sessionStorage for 24h), and routes rendering between the
- * Home cockpit and thread-specific Conversation+Canvas layouts.
- */
 export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
   const {
     tabs, activeId, setActiveId,
@@ -35,6 +30,14 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
   const handleRemoveArtifact = useCallback((tabId, artifactId) => {
     updateTab(tabId, (t) => ({
       artifacts: (t.artifacts || []).filter((a) => a.id !== artifactId),
+    }));
+  }, [updateTab]);
+
+  const handleUpdateArtifact = useCallback((tabId, artifactId, updates) => {
+    updateTab(tabId, (t) => ({
+      artifacts: (t.artifacts || []).map((a) =>
+        a.id === artifactId ? { ...a, ...updates } : a
+      ),
     }));
   }, [updateTab]);
 
@@ -74,6 +77,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
             modelId={modelId}
             onUpdateTab={updateTab}
             onRemoveArtifact={(artifactId) => handleRemoveArtifact(activeTab.id, artifactId)}
+            onUpdateArtifact={(artifactId, updates) => handleUpdateArtifact(activeTab.id, artifactId, updates)}
           />
         )}
       </div>
@@ -81,7 +85,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
   );
 }
 
-function ThreadLayout({ tab, modelId, onUpdateTab, onRemoveArtifact }) {
+function ThreadLayout({ tab, modelId, onUpdateTab, onRemoveArtifact, onUpdateArtifact }) {
   return (
     <div style={{
       flex: 1, minHeight: 0,
@@ -106,7 +110,11 @@ function ThreadLayout({ tab, modelId, onUpdateTab, onRemoveArtifact }) {
         }}>
           Canvas · {tab.title}
         </div>
-        <Canvas tab={tab} onRemoveArtifact={onRemoveArtifact} />
+        <Canvas
+          tab={tab}
+          onRemoveArtifact={onRemoveArtifact}
+          onUpdateArtifact={onUpdateArtifact}
+        />
       </div>
     </div>
   );

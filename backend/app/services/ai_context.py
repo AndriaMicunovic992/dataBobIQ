@@ -58,7 +58,13 @@ async def build_ai_context(
     )
     from app.duckdb_engine import execute_query, view_name_for
 
-    parts: list[str] = ["<data_context>"]
+    parts: list[str] = [
+        "<data_context>",
+        "<!-- This is your complete data model. Use dimension types and cardinalities ",
+        "     to plan queries: date/timestamp types support date_trunc; low-cardinality ",
+        "     string columns are good for group_by; high-cardinality columns need filters. ",
+        "     Measures show the numeric columns you can aggregate. -->",
+    ]
 
     # ------------------------------------------------------------------ #
     # All active datasets in this model                                    #
@@ -96,7 +102,11 @@ async def build_ai_context(
             parts.append("    <dimensions>")
             for dim in dimensions:
                 display_name = dim.canonical_name or dim.source_name
-                attrs = f'name="{_xml_escape(display_name)}" cardinality="{dim.unique_count or "?"}"'
+                attrs = (
+                    f'name="{_xml_escape(display_name)}" '
+                    f'type="{dim.data_type}" role="{dim.column_role}" '
+                    f'cardinality="{dim.unique_count or "?"}"'
+                )
                 # Try to fetch top values from DuckDB (lightweight query)
                 top_vals = ""
                 try:

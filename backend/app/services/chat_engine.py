@@ -21,9 +21,10 @@ _DATA_TOOLS = [
     {
         "name": "query_data",
         "description": (
-            "Query any dataset to explore its structure and values.\n\n"
-            "Use to understand what data exists before saving knowledge. "
-            "Set dataset_name to query a specific table."
+            "Query any dataset with grouping and aggregation. Returns max 50 rows.\n\n"
+            "Plan your query using <data_context>: check dimension types and cardinalities "
+            "to choose the right group_by level. Use date_trunc on date/timestamp columns. "
+            "The result should directly answer the question — don't aggregate further in text."
         ),
         "input_schema": {
             "type": "object",
@@ -34,6 +35,24 @@ _DATA_TOOLS = [
                 "value_column": {"type": "string"},
                 "aggregation": {"type": "string", "enum": ["sum", "avg", "min", "max", "count"]},
                 "filters": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+                "date_trunc": {
+                    "type": "object",
+                    "description": (
+                        "Truncate date/timestamp columns to a coarser granularity before grouping. "
+                        "Keys are column names that appear in group_by, values are granularity: "
+                        "month, quarter, year, week, day. "
+                        "Example: {\"period\": \"month\"} groups a date column by month."
+                    ),
+                    "additionalProperties": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
+                },
+                "order_by": {
+                    "type": "string",
+                    "description": (
+                        "Column to order results by. Prefix with '-' for descending. "
+                        "Default: descending by aggregated value. "
+                        "Example: 'period' for chronological, '-sum_amount' for largest first."
+                    ),
+                },
             },
         },
     },
@@ -167,19 +186,18 @@ _SCENARIO_TOOLS = [
     {
         "name": "query_data",
         "description": (
-            "Query the user's financial data with grouping and aggregation. "
-            "Returns max 50 grouped rows.\n\n"
-            "WHEN TO USE: When the user asks about totals, breakdowns, comparisons, "
-            "or trends. Also use to VERIFY filter values before creating scenario rules.\n\n"
-            "HOW TO USE:\n"
-            "- Always include group_by — ungrouped queries return a single total\n"
-            "- Use filters from the <glossary> to translate business terms to column values\n"
-            "- Set dataset_name to query a specific table (defaults to main financial dataset)\n\n"
-            "COMMON MISTAKES:\n"
-            "- Filtering on a column that doesn't exist — check <dimensions> first\n"
-            "- Filtering on numeric account codes when a grouping column exists — always prefer "
-            "grouping columns (account_group, reporting_h2) over raw codes (hauptkonto)\n"
-            "- Forgetting to cast filter values to strings — all filter values are string arrays"
+            "Query the data model with grouping and aggregation. Returns max 50 rows.\n\n"
+            "Plan your query using <data_context>: check dimension names, types, and "
+            "cardinalities to choose the right group_by level. Check <glossary> and "
+            "<knowledge> to translate business terms into filters.\n\n"
+            "The result should directly answer the user's question — if you'd need to "
+            "aggregate the result further in text, your query granularity is wrong.\n\n"
+            "KEY RULES:\n"
+            "- Always include group_by — omitting it returns a single total\n"
+            "- Use date_trunc on date/timestamp columns to control time granularity\n"
+            "- Use filters to narrow to the relevant subset\n"
+            "- All filter values must be string arrays\n"
+            "- Check <dimensions> before using any column name"
         ),
         "input_schema": {
             "type": "object",
@@ -213,6 +231,24 @@ _SCENARIO_TOOLS = [
                         "type": "array",
                         "items": {"type": "string"},
                     },
+                },
+                "date_trunc": {
+                    "type": "object",
+                    "description": (
+                        "Truncate date/timestamp columns to a coarser granularity before grouping. "
+                        "Keys are column names that appear in group_by, values are granularity: "
+                        "month, quarter, year, week, day. "
+                        "Example: {\"period\": \"month\"} groups a date column by month."
+                    ),
+                    "additionalProperties": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
+                },
+                "order_by": {
+                    "type": "string",
+                    "description": (
+                        "Column to order results by. Prefix with '-' for descending. "
+                        "Default: descending by aggregated value. "
+                        "Example: 'period' for chronological, '-sum_amount' for largest first."
+                    ),
                 },
             },
         },
@@ -512,12 +548,16 @@ def _validate_identifier(name: str) -> bool:
     return bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name))
 
 
+_VALID_DATE_TRUNC = {"day", "week", "month", "quarter", "year"}
+
+
 def _build_query_sql(view: str, tool_input: dict) -> str:
     """Build a DuckDB SQL query from structured query_data parameters."""
     group_by = tool_input.get("group_by", [])
     value_column = tool_input.get("value_column", "amount")
     aggregation = tool_input.get("aggregation", "sum").upper()
     filters = tool_input.get("filters", {})
+    date_trunc = tool_input.get("date_trunc", {})
 
     # Validate identifiers
     for col in group_by:
@@ -527,12 +567,29 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
         raise ValueError(f"Invalid value column: {value_column!r}")
     if aggregation not in ("SUM", "AVG", "MIN", "MAX", "COUNT"):
         raise ValueError(f"Invalid aggregation: {aggregation!r}")
+    for col, gran in date_trunc.items():
+        if not _validate_identifier(col):
+            raise ValueError(f"Invalid date_trunc column: {col!r}")
+        if gran not in _VALID_DATE_TRUNC:
+            raise ValueError(f"Invalid date_trunc granularity: {gran!r}")
 
-    # SELECT clause
-    group_cols = ", ".join(f'"{c}"' for c in group_by)
+    # Build SELECT and GROUP BY expressions, applying DATE_TRUNC where requested.
+    select_exprs: list[str] = []
+    group_exprs: list[str] = []
+    for col in group_by:
+        if col in date_trunc:
+            gran = date_trunc[col]
+            expr = f"DATE_TRUNC('{gran}', \"{col}\") AS \"{col}\""
+            group_ref = f"DATE_TRUNC('{gran}', \"{col}\")"
+        else:
+            expr = f'"{col}"'
+            group_ref = f'"{col}"'
+        select_exprs.append(expr)
+        group_exprs.append(group_ref)
+
     agg_expr = f'{aggregation}("{value_column}") AS {aggregation.lower()}_{value_column}'
-    select_parts = [group_cols, agg_expr] if group_cols else [agg_expr]
-    sql = f"SELECT {', '.join(select_parts)} FROM {view}"
+    select_exprs.append(agg_expr)
+    sql = f"SELECT {', '.join(select_exprs)} FROM {view}"
 
     # WHERE clause from filters
     where_parts: list[str] = []
@@ -545,10 +602,27 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
     if where_parts:
         sql += " WHERE " + " AND ".join(where_parts)
 
-    # GROUP BY
-    if group_cols:
-        sql += f" GROUP BY {group_cols}"
-        sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
+    # GROUP BY + ORDER BY
+    if group_exprs:
+        sql += f" GROUP BY {', '.join(group_exprs)}"
+
+        order_by_raw = tool_input.get("order_by")
+        if order_by_raw and isinstance(order_by_raw, str):
+            desc = order_by_raw.startswith("-")
+            col = order_by_raw.lstrip("-")
+            agg_alias = f"{aggregation.lower()}_{value_column}"
+            if col == agg_alias:
+                sql += f" ORDER BY {agg_alias} {'DESC' if desc else 'ASC'}"
+            elif _validate_identifier(col):
+                sql += f' ORDER BY "{col}" {"DESC" if desc else "ASC"}'
+        elif date_trunc:
+            trunc_cols = [c for c in group_by if c in date_trunc]
+            if trunc_cols:
+                sql += f' ORDER BY "{trunc_cols[0]}" ASC'
+            else:
+                sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
+        else:
+            sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
 
     sql += " LIMIT 50"
     return sql
@@ -1065,11 +1139,20 @@ ONBOARDING FLOW (when message is "__ONBOARDING_START__"):
    - Business terms: "What do your team call the main cost categories?"
 5. Number the questions so the user can reply to specific ones
 
+QUERY STRATEGY:
+You have the full data model in <data_context> — dimensions with types, cardinalities, \
+and sample values; measures with stats. Use this to plan precise queries. DuckDB handles \
+all computation. The result from query_data should be the answer, not raw material you \
+then aggregate in text. Check dimension types: date columns support date_trunc; low-cardinality \
+string columns group well; high-cardinality columns usually need filters.
+
 TOOL USAGE PATTERNS:
 query_data: Use BEFORE saving knowledge to verify claims. Also use when the user asks
 "what does X look like" or "show me the data for Y."
+- Read <dimensions> for available columns, their types, and cardinalities
 - Always include a group_by — don't just aggregate everything
-- Limit to relevant columns — don't dump entire tables
+- Use date_trunc on date/timestamp columns when appropriate
+- The result rows should directly answer the question — don't post-process in text
 
 list_dimension_values: Use when you need to see what values exist in a column.
 - Use with search parameter when looking for specific values
@@ -1174,10 +1257,37 @@ BEHAVIORAL RULES:
    When creating multiple rules for a scenario, submit them ALL in a single
    create_scenario call. Never split rules across multiple calls.
 
+QUERY STRATEGY — YOU ARE THE QUERY PLANNER, DuckDB IS THE ENGINE:
+You have a complete data model in <data_context>. Every dimension, its type, cardinality, \
+and sample values. Every measure with its data type and summary stats. Every knowledge \
+entry and glossary mapping. This IS your schema — read it carefully and use it to plan \
+every query.
+
+YOUR JOB: Translate the user's question into a precise structured query. DuckDB handles \
+all computation — grouping, aggregation, filtering, date truncation, sorting. You NEVER \
+do computation in text. The result from query_data should already be the final answer \
+the user needs, ready to present.
+
+HOW TO PLAN A QUERY:
+1. What does the user want to see? → pick the right measure (value_column) and aggregation
+2. At what granularity? → pick group_by columns from <dimensions>
+   - Check the dimension's type and cardinality to decide the right grouping level
+   - type="date"/"timestamp" with high cardinality → use date_trunc to the right granularity
+   - type="string" with low cardinality (e.g. 5-20 values) → group directly
+   - type="string" with very high cardinality → probably needs a filter, not a group_by
+3. What subset of data? → pick filters from <glossary>, <knowledge>, or list_dimension_values
+4. What ordering? → chronological for time series, by value for rankings
+
+CRITICAL RULE: The query result rows should map 1:1 to what the user will read. \
+If you get back 200 rows and then summarize them in text, your query was wrong — \
+go back and adjust group_by, date_trunc, or filters until the result is clean.
+
 TOOL USAGE PATTERNS:
-query_data: Primary tool for answering "how much", "what's the total", "compare X and Y"
-- Always group by relevant dimensions
-- Use filters from the glossary/knowledge for business terms
+query_data: Primary tool for answering data questions
+- Read <dimensions> to understand available columns, types, and cardinalities
+- Use <glossary> and <knowledge> to map business terms to column filters
+- Use date_trunc on date/timestamp dimensions when time-based aggregation is needed
+- Use order_by for chronological or custom sort; default is by aggregated value desc
 - Set dataset_name when querying non-default tables
 
 list_dimension_values: Use to find filter values before creating rules

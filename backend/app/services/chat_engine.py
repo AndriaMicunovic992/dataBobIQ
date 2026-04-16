@@ -34,6 +34,16 @@ _DATA_TOOLS = [
                 "value_column": {"type": "string"},
                 "aggregation": {"type": "string", "enum": ["sum", "avg", "min", "max", "count"]},
                 "filters": {"type": "object", "additionalProperties": {"type": "array", "items": {"type": "string"}}},
+                "date_trunc": {
+                    "type": "object",
+                    "description": (
+                        "Truncate date/timestamp columns to a coarser granularity before grouping. "
+                        "Keys are column names that appear in group_by, values are granularity: "
+                        "month, quarter, year, week, day. "
+                        "Example: {\"period\": \"month\"} groups a date column by month."
+                    ),
+                    "additionalProperties": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
+                },
             },
         },
     },
@@ -174,12 +184,16 @@ _SCENARIO_TOOLS = [
             "HOW TO USE:\n"
             "- Always include group_by — ungrouped queries return a single total\n"
             "- Use filters from the <glossary> to translate business terms to column values\n"
-            "- Set dataset_name to query a specific table (defaults to main financial dataset)\n\n"
+            "- Set dataset_name to query a specific table (defaults to main financial dataset)\n"
+            "- For monthly/quarterly/yearly breakdowns, use date_trunc on date columns "
+            "(e.g. date_trunc: {\"period\": \"month\"}). ALWAYS use date_trunc when the user "
+            "asks for time-based aggregation — never group by raw date columns.\n\n"
             "COMMON MISTAKES:\n"
             "- Filtering on a column that doesn't exist — check <dimensions> first\n"
             "- Filtering on numeric account codes when a grouping column exists — always prefer "
             "grouping columns (account_group, reporting_h2) over raw codes (hauptkonto)\n"
-            "- Forgetting to cast filter values to strings — all filter values are string arrays"
+            "- Forgetting to cast filter values to strings — all filter values are string arrays\n"
+            "- Grouping by a raw date column instead of using date_trunc — produces too many rows"
         ),
         "input_schema": {
             "type": "object",
@@ -213,6 +227,16 @@ _SCENARIO_TOOLS = [
                         "type": "array",
                         "items": {"type": "string"},
                     },
+                },
+                "date_trunc": {
+                    "type": "object",
+                    "description": (
+                        "Truncate date/timestamp columns to a coarser granularity before grouping. "
+                        "Keys are column names that appear in group_by, values are granularity: "
+                        "month, quarter, year, week, day. "
+                        "Example: {\"period\": \"month\"} groups a date column by month."
+                    ),
+                    "additionalProperties": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
                 },
             },
         },
@@ -512,12 +536,16 @@ def _validate_identifier(name: str) -> bool:
     return bool(re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name))
 
 
+_VALID_DATE_TRUNC = {"day", "week", "month", "quarter", "year"}
+
+
 def _build_query_sql(view: str, tool_input: dict) -> str:
     """Build a DuckDB SQL query from structured query_data parameters."""
     group_by = tool_input.get("group_by", [])
     value_column = tool_input.get("value_column", "amount")
     aggregation = tool_input.get("aggregation", "sum").upper()
     filters = tool_input.get("filters", {})
+    date_trunc = tool_input.get("date_trunc", {})
 
     # Validate identifiers
     for col in group_by:
@@ -527,12 +555,29 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
         raise ValueError(f"Invalid value column: {value_column!r}")
     if aggregation not in ("SUM", "AVG", "MIN", "MAX", "COUNT"):
         raise ValueError(f"Invalid aggregation: {aggregation!r}")
+    for col, gran in date_trunc.items():
+        if not _validate_identifier(col):
+            raise ValueError(f"Invalid date_trunc column: {col!r}")
+        if gran not in _VALID_DATE_TRUNC:
+            raise ValueError(f"Invalid date_trunc granularity: {gran!r}")
 
-    # SELECT clause
-    group_cols = ", ".join(f'"{c}"' for c in group_by)
+    # Build SELECT and GROUP BY expressions, applying DATE_TRUNC where requested.
+    select_exprs: list[str] = []
+    group_exprs: list[str] = []
+    for col in group_by:
+        if col in date_trunc:
+            gran = date_trunc[col]
+            expr = f"DATE_TRUNC('{gran}', \"{col}\") AS \"{col}\""
+            group_ref = f"DATE_TRUNC('{gran}', \"{col}\")"
+        else:
+            expr = f'"{col}"'
+            group_ref = f'"{col}"'
+        select_exprs.append(expr)
+        group_exprs.append(group_ref)
+
     agg_expr = f'{aggregation}("{value_column}") AS {aggregation.lower()}_{value_column}'
-    select_parts = [group_cols, agg_expr] if group_cols else [agg_expr]
-    sql = f"SELECT {', '.join(select_parts)} FROM {view}"
+    select_exprs.append(agg_expr)
+    sql = f"SELECT {', '.join(select_exprs)} FROM {view}"
 
     # WHERE clause from filters
     where_parts: list[str] = []
@@ -546,9 +591,13 @@ def _build_query_sql(view: str, tool_input: dict) -> str:
         sql += " WHERE " + " AND ".join(where_parts)
 
     # GROUP BY
-    if group_cols:
-        sql += f" GROUP BY {group_cols}"
-        sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
+    if group_exprs:
+        sql += f" GROUP BY {', '.join(group_exprs)}"
+        # Order chronologically when date_trunc is used, otherwise by value desc.
+        if date_trunc and len(group_by) == 1 and group_by[0] in date_trunc:
+            sql += f' ORDER BY "{group_by[0]}" ASC'
+        else:
+            sql += f" ORDER BY {aggregation.lower()}_{value_column} DESC"
 
     sql += " LIMIT 50"
     return sql

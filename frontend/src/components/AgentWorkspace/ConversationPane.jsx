@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { streamChat } from '../../api.js';
 import { colors, spacing, radius, typography, shadows } from '../../theme.js';
 import PromptBar from './PromptBar.jsx';
-import MarkdownRenderer from './MarkdownRenderer.jsx';
+import StructuredMessage from './StructuredMessage.jsx';
 
 /**
  * Narrow chat column inside a thread tab. Reuses the same SSE plumbing as
@@ -187,7 +187,7 @@ function AssistantBubble({ message, onPinToCanvas }) {
               if (btn) btn.style.opacity = '0';
             }}
             >
-              <MarkdownRenderer text={part.content || ''} />
+              <StructuredMessage text={part.content || ''} variant="chat" />
               {!message.streaming && textParts.length > 0 && (
                 <PinToCanvasButton onClick={handlePin} />
               )}

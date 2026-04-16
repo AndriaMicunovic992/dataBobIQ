@@ -1146,6 +1146,16 @@ all computation. The result from query_data should be the answer, not raw materi
 then aggregate in text. Check dimension types: date columns support date_trunc; low-cardinality \
 string columns group well; high-cardinality columns usually need filters.
 
+RESPONSE STRUCTURE:
+When answering a data question or producing an analysis, wrap your response in three tags:
+  <reasoning>how you approached it, what tools/filters you used, any assumptions</reasoning>
+  <output>the actual answer — tables, numbers, direct statements</output>
+  <commentary>insights, observations, caveats, next steps</commentary>
+The user can collapse each section independently. Reasoning is hidden by default on the
+canvas, so don't repeat essential numbers there. Use markdown freely inside each tag
+(tables, bold, lists).
+Skip the tags only for pure conversational turns (short clarifying questions, greetings).
+
 TOOL USAGE PATTERNS:
 query_data: Use BEFORE saving knowledge to verify claims. Also use when the user asks
 "what does X look like" or "show me the data for Y."
@@ -1281,6 +1291,16 @@ HOW TO PLAN A QUERY:
 CRITICAL RULE: The query result rows should map 1:1 to what the user will read. \
 If you get back 200 rows and then summarize them in text, your query was wrong — \
 go back and adjust group_by, date_trunc, or filters until the result is clean.
+
+RESPONSE STRUCTURE:
+When you answer a data question, build a scenario, or produce an analysis, wrap your
+response in three tags so the user can collapse sections independently:
+  <reasoning>how you approached it — which tools, filters, assumptions, sanity checks</reasoning>
+  <output>the actual answer — the table, the scenario summary, the numbers</output>
+  <commentary>insights, observations, what-to-watch-next, caveats</commentary>
+Use markdown freely inside each tag (tables, bold, lists all work). Reasoning is hidden
+by default on the canvas — don't repeat essential numbers there, put them in <output>.
+Skip the tags only for pure conversational turns (short clarifying questions, greetings).
 
 TOOL USAGE PATTERNS:
 query_data: Primary tool for answering data questions

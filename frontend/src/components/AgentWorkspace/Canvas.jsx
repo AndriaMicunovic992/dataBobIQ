@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { colors, spacing, radius, typography, shadows, transitions } from '../../theme.js';
-import MarkdownRenderer from './MarkdownRenderer.jsx';
+import StructuredMessage from './StructuredMessage.jsx';
 
 const GRID_COLS = 12;
 const ROW_HEIGHT = 60;
@@ -257,7 +257,7 @@ function ArtifactBody({ content, type }) {
         color: colors.textPrimary,
         lineHeight: 1.6,
       }}>
-        <MarkdownRenderer text={content} />
+        <StructuredMessage text={content} variant="canvas" />
       </div>
     );
   }

@@ -2,15 +2,14 @@ import { colors, spacing, radius, typography } from '../../theme.js';
 import ArtifactCard from './ArtifactCard.jsx';
 
 /**
- * Right-side artifact column for a thread tab. In Phase 1 this just shows
- * a placeholder until the chat agent emits structured artifacts the canvas
- * can render. Pin/Export/Share are stubbed to no-op toasts.
+ * Right-side artifact column for a thread tab. Renders structured results
+ * from tool calls (query_data tables, scenario comparisons, KPI values)
+ * that the ConversationPane pushes onto `tab.artifacts`.
  */
 export default function Canvas({ tab }) {
   const artifacts = tab.artifacts || [];
 
   const stub = (label) => () => {
-    // Phase 1 stub — replace with real behavior in Phase 2.
     // eslint-disable-next-line no-alert
     alert(`${label} — coming in Phase 2.`);
   };
@@ -66,15 +65,94 @@ export default function Canvas({ tab }) {
           onExport={stub('Export')}
           onShare={stub('Share')}
         >
-          <pre style={{
-            margin: 0, fontSize: typography.fontSizes.xs,
-            fontFamily: 'monospace', color: colors.textSecondary,
-            whiteSpace: 'pre-wrap',
-          }}>
-            {typeof a.content === 'string' ? a.content : JSON.stringify(a.content, null, 2)}
-          </pre>
+          <ArtifactBody content={a.content} />
         </ArtifactCard>
       ))}
     </div>
   );
+}
+
+/** Render artifact content — tries table layout for row data, otherwise JSON. */
+function ArtifactBody({ content }) {
+  // Detect tabular data: array of objects, or {rows: [...], columns: [...]}
+  const rows = Array.isArray(content)
+    ? content
+    : (content?.rows && Array.isArray(content.rows)) ? content.rows : null;
+
+  if (rows && rows.length > 0 && typeof rows[0] === 'object') {
+    const cols = content?.columns || Object.keys(rows[0]);
+    return (
+      <div style={{ overflowX: 'auto', maxHeight: 400 }}>
+        <table style={{
+          width: '100%', borderCollapse: 'collapse',
+          fontSize: typography.fontSizes.xs,
+          fontFamily: typography.fontFamily,
+        }}>
+          <thead>
+            <tr>
+              {cols.map((col) => (
+                <th key={col} style={{
+                  textAlign: 'left',
+                  padding: `${spacing.xs}px ${spacing.sm}px`,
+                  borderBottom: `2px solid ${colors.border}`,
+                  color: colors.textSecondary,
+                  fontWeight: typography.fontWeights.semibold,
+                  whiteSpace: 'nowrap',
+                  position: 'sticky', top: 0,
+                  background: colors.bgCard,
+                }}>
+                  {col}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 100).map((row, ri) => (
+              <tr key={ri}>
+                {cols.map((col) => (
+                  <td key={col} style={{
+                    padding: `${spacing.xs}px ${spacing.sm}px`,
+                    borderBottom: `1px solid ${colors.border}`,
+                    color: colors.textPrimary,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {formatCell(row[col])}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {rows.length > 100 && (
+          <div style={{
+            padding: spacing.sm, textAlign: 'center',
+            color: colors.textMuted, fontSize: typography.fontSizes.xs,
+          }}>
+            Showing first 100 of {rows.length} rows
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Scalar or unrecognized — show as formatted JSON
+  const display = typeof content === 'string' ? content : JSON.stringify(content, null, 2);
+  return (
+    <pre style={{
+      margin: 0, fontSize: typography.fontSizes.xs,
+      fontFamily: 'monospace', color: colors.textSecondary,
+      whiteSpace: 'pre-wrap', maxHeight: 400, overflowY: 'auto',
+    }}>
+      {display}
+    </pre>
+  );
+}
+
+function formatCell(value) {
+  if (value === null || value === undefined) return '—';
+  if (typeof value === 'number') {
+    return Number.isInteger(value) ? value.toLocaleString() : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  }
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
 }

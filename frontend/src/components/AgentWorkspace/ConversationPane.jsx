@@ -13,6 +13,37 @@ import PromptBar from './PromptBar.jsx';
  * `onUpdateTab` callback from the workspace shell.
  */
 
+// Tool names whose results are "artifact-worthy" — they carry structured
+// data the canvas can render as a card.
+const ARTIFACT_TOOLS = new Set([
+  'query_data',
+  'compare_scenarios',
+  'get_kpi_values',
+  'create_scenario',
+]);
+
+const ARTIFACT_TITLES = {
+  query_data: 'Query Result',
+  compare_scenarios: 'Scenario Comparison',
+  get_kpi_values: 'KPI Values',
+  create_scenario: 'Scenario Created',
+};
+
+function tryParseContent(content) {
+  if (typeof content !== 'string') return content;
+  try { return JSON.parse(content); } catch { return content; }
+}
+
+function makeArtifact(toolName, content) {
+  const parsed = tryParseContent(content);
+  return {
+    id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    title: ARTIFACT_TITLES[toolName] || toolName,
+    subtitle: toolName,
+    content: parsed,
+  };
+}
+
 function UserBubble({ message }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: spacing.sm }}>
@@ -112,6 +143,63 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
+  // Shared SSE event handler — used by both sendMessage and the seed effect.
+  const makeHandler = (assistantId) => (event) => {
+    if (event.type === 'text' || event.type === 'delta') {
+      const chunk = event.text || event.delta || '';
+      onUpdateTab(tab.id, (t) => ({
+        messages: (t.messages || []).map((m) => {
+          if (m.id !== assistantId) return m;
+          const parts = [...(m.parts || [])];
+          const last = parts[parts.length - 1];
+          if (last && last.type === 'text') {
+            parts[parts.length - 1] = { ...last, content: last.content + chunk };
+          } else {
+            parts.push({ type: 'text', content: chunk });
+          }
+          return { ...m, parts };
+        }),
+      }));
+    } else if (event.type === 'tool_use') {
+      onUpdateTab(tab.id, (t) => ({
+        messages: (t.messages || []).map((m) =>
+          m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
+        ),
+      }));
+    } else if (event.type === 'tool_result') {
+      onUpdateTab(tab.id, (t) => {
+        const updated = {
+          messages: (t.messages || []).map((m) =>
+            m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
+          ),
+        };
+        // Push an artifact onto the canvas for tool results that carry data.
+        if (ARTIFACT_TOOLS.has(event.name) && event.content) {
+          updated.artifacts = [...(t.artifacts || []), makeArtifact(event.name, event.content)];
+        }
+        return updated;
+      });
+    } else if (event.type === 'scenario_created') {
+      qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
+      qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
+    } else if (event.type === 'done' || event.type === 'error') {
+      setStreaming(false);
+      if (event.type === 'error') {
+        onUpdateTab(tab.id, (t) => ({
+          messages: (t.messages || []).map((m) => {
+            if (m.id !== assistantId) return m;
+            const parts = [...(m.parts || []), { type: 'text', content: `\n\nError: ${event.data}` }];
+            return { ...m, parts, streaming: false };
+          }),
+        }));
+      } else {
+        onUpdateTab(tab.id, (t) => ({
+          messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
+        }));
+      }
+    }
+  };
+
   const sendMessage = useCallback((text) => {
     if (!text || streaming || !modelId) return;
 
@@ -119,7 +207,6 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     const assistantId = `a-${Date.now()}`;
     const assistantMsg = { id: assistantId, role: 'assistant', parts: [], streaming: true };
 
-    // Snapshot history before we mutate — chat-engine expects role+content only.
     const history = messages.map((m) => ({
       role: m.role,
       content: m.content || m.parts?.map((p) => p.content || '').join('') || '',
@@ -134,68 +221,19 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     const stop = streamChat(
       modelId,
       { message: text, history, mode: 'scenario' },
-      (event) => {
-        if (event.type === 'text' || event.type === 'delta') {
-          const chunk = event.text || event.delta || '';
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) => {
-              if (m.id !== assistantId) return m;
-              const parts = [...(m.parts || [])];
-              const last = parts[parts.length - 1];
-              if (last && last.type === 'text') {
-                parts[parts.length - 1] = { ...last, content: last.content + chunk };
-              } else {
-                parts.push({ type: 'text', content: chunk });
-              }
-              return { ...m, parts };
-            }),
-          }));
-        } else if (event.type === 'tool_use') {
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) =>
-              m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
-            ),
-          }));
-        } else if (event.type === 'tool_result') {
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) =>
-              m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
-            ),
-          }));
-        } else if (event.type === 'scenario_created') {
-          qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
-          qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
-        } else if (event.type === 'done' || event.type === 'error') {
-          setStreaming(false);
-          if (event.type === 'error') {
-            onUpdateTab(tab.id, (t) => ({
-              messages: (t.messages || []).map((m) => {
-                if (m.id !== assistantId) return m;
-                const parts = [...(m.parts || []), { type: 'text', content: `\n\nError: ${event.data}` }];
-                return { ...m, parts, streaming: false };
-              }),
-            }));
-          } else {
-            onUpdateTab(tab.id, (t) => ({
-              messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
-            }));
-          }
-        }
-      }
+      makeHandler(assistantId),
     );
     stopRef.current = stop;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming, modelId, messages, onUpdateTab, tab.id, qc]);
 
-  // Auto-fire a pending seed message on mount (when a thread is opened with
-  // a pre-filled user question like "Why is Base Case tracking below actuals?").
+  // Auto-fire a pending seed message on mount.
   const seedFiredRef = useRef(false);
   useEffect(() => {
     if (seedFiredRef.current) return;
     if (!tab.pendingSeed) return;
     seedFiredRef.current = true;
-    // The seed message is already in `messages` as the first user message —
-    // we just need to kick off the streaming response. Re-run sendMessage
-    // without re-adding the user message: easier to inline the send logic.
+
     const seedText = tab.pendingSeed;
     const assistantId = `a-${Date.now()}`;
     const assistantMsg = { id: assistantId, role: 'assistant', parts: [], streaming: true };
@@ -204,67 +242,19 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
       pendingSeed: null,
     }));
     setStreaming(true);
+
     const history = (tab.messages || [])
       .filter((m) => m.id !== assistantId)
       .map((m) => ({
         role: m.role,
         content: m.content || m.parts?.map((p) => p.content || '').join('') || '',
       }));
-    // Drop the last (most recent) user message from history — chat engine
-    // expects the current message separately.
     const trimmedHistory = history.slice(0, -1);
 
     const stop = streamChat(
       modelId,
       { message: seedText, history: trimmedHistory, mode: 'scenario' },
-      (event) => {
-        if (event.type === 'text' || event.type === 'delta') {
-          const chunk = event.text || event.delta || '';
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) => {
-              if (m.id !== assistantId) return m;
-              const parts = [...(m.parts || [])];
-              const last = parts[parts.length - 1];
-              if (last && last.type === 'text') {
-                parts[parts.length - 1] = { ...last, content: last.content + chunk };
-              } else {
-                parts.push({ type: 'text', content: chunk });
-              }
-              return { ...m, parts };
-            }),
-          }));
-        } else if (event.type === 'tool_use') {
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) =>
-              m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
-            ),
-          }));
-        } else if (event.type === 'tool_result') {
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) =>
-              m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
-            ),
-          }));
-        } else if (event.type === 'scenario_created') {
-          qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
-          qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
-        } else if (event.type === 'done' || event.type === 'error') {
-          setStreaming(false);
-          if (event.type === 'error') {
-            onUpdateTab(tab.id, (t) => ({
-              messages: (t.messages || []).map((m) => {
-                if (m.id !== assistantId) return m;
-                const parts = [...(m.parts || []), { type: 'text', content: `\n\nError: ${event.data}` }];
-                return { ...m, parts, streaming: false };
-              }),
-            }));
-          } else {
-            onUpdateTab(tab.id, (t) => ({
-              messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
-            }));
-          }
-        }
-      }
+      makeHandler(assistantId),
     );
     stopRef.current = stop;
     // eslint-disable-next-line react-hooks/exhaustive-deps

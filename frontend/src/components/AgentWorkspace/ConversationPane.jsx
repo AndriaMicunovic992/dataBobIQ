@@ -14,7 +14,8 @@ import PromptBar from './PromptBar.jsx';
  */
 
 // Tool names whose results are "artifact-worthy" — they carry structured
-// data the canvas can render as a card.
+// data the canvas can render as a card. Only the LAST artifact-worthy
+// result per assistant turn is auto-added to the canvas (the "final output").
 const ARTIFACT_TOOLS = new Set([
   'query_data',
   'compare_scenarios',
@@ -61,6 +62,38 @@ function UserBubble({ message }) {
   );
 }
 
+function ExpandableToolResult({ part }) {
+  const [expanded, setExpanded] = useState(false);
+  const hasContent = part.content && part.content !== '' && part.content !== '""';
+  return (
+    <div
+      style={{
+        fontSize: typography.fontSizes.xs,
+        color: '#065f46', fontFamily: typography.fontFamily,
+        background: '#f0fdf4', border: `1px solid #bbf7d0`,
+        borderRadius: radius.md, padding: `${spacing.xs}px ${spacing.sm}px`,
+        cursor: hasContent ? 'pointer' : 'default',
+      }}
+      onClick={() => hasContent && setExpanded((v) => !v)}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+        <span>✓ {part.name || 'result'}</span>
+        {hasContent && <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6ee7b7' }}>{expanded ? '▲' : '▼'}</span>}
+      </div>
+      {expanded && hasContent && (
+        <pre style={{
+          margin: `${spacing.xs}px 0 0`, fontSize: 10, color: '#065f46',
+          fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          background: '#dcfce7', borderRadius: radius.sm, padding: spacing.xs,
+          maxHeight: 200, overflowY: 'auto',
+        }}>
+          {typeof part.content === 'string' ? part.content : JSON.stringify(part.content, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function AssistantBubble({ message }) {
   const parts = message.parts || [{ type: 'text', content: message.content || '' }];
   return (
@@ -88,16 +121,7 @@ function AssistantBubble({ message }) {
             );
           }
           if (part.type === 'tool_result') {
-            return (
-              <div key={i} style={{
-                fontSize: typography.fontSizes.xs,
-                color: '#065f46', fontFamily: typography.fontFamily,
-                background: '#f0fdf4', border: `1px solid #bbf7d0`,
-                borderRadius: radius.md, padding: `${spacing.xs}px ${spacing.sm}px`,
-              }}>
-                ✓ {part.name || 'result'}
-              </div>
-            );
+            return <ExpandableToolResult key={i} part={part} />;
           }
           return (
             <div key={i} style={{
@@ -137,6 +161,9 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef(null);
   const stopRef = useRef(null);
+  // Accumulate artifact-worthy results during a turn; only the last one
+  // gets auto-added to the canvas when the turn finishes (the "final output").
+  const pendingArtifactRef = useRef(null);
   const messages = tab.messages || [];
 
   useEffect(() => {
@@ -167,23 +194,24 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
         ),
       }));
     } else if (event.type === 'tool_result') {
-      onUpdateTab(tab.id, (t) => {
-        const updated = {
-          messages: (t.messages || []).map((m) =>
-            m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
-          ),
-        };
-        // Push an artifact onto the canvas for tool results that carry data.
-        if (ARTIFACT_TOOLS.has(event.name) && event.content) {
-          updated.artifacts = [...(t.artifacts || []), makeArtifact(event.name, event.content)];
-        }
-        return updated;
-      });
+      onUpdateTab(tab.id, (t) => ({
+        messages: (t.messages || []).map((m) =>
+          m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
+        ),
+      }));
+      // Buffer artifact-worthy results — only the last one per turn gets
+      // auto-added to the canvas when the stream finishes.
+      if (ARTIFACT_TOOLS.has(event.name) && event.content) {
+        pendingArtifactRef.current = makeArtifact(event.name, event.content);
+      }
     } else if (event.type === 'scenario_created') {
       qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
       qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
     } else if (event.type === 'done' || event.type === 'error') {
       setStreaming(false);
+      // Flush the pending artifact (final output) to the canvas.
+      const artifact = pendingArtifactRef.current;
+      pendingArtifactRef.current = null;
       if (event.type === 'error') {
         onUpdateTab(tab.id, (t) => ({
           messages: (t.messages || []).map((m) => {
@@ -193,9 +221,15 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
           }),
         }));
       } else {
-        onUpdateTab(tab.id, (t) => ({
-          messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
-        }));
+        onUpdateTab(tab.id, (t) => {
+          const updated = {
+            messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
+          };
+          if (artifact) {
+            updated.artifacts = [...(t.artifacts || []), artifact];
+          }
+          return updated;
+        });
       }
     }
   };
@@ -282,7 +316,7 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
             fontFamily: typography.fontFamily,
             textAlign: 'center', marginTop: spacing.xl,
           }}>
-            Ask Bob anything about this scenario.
+            Ask anything about this scenario.
           </div>
         )}
         {messages.map((msg) => (

@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { streamChat } from '../../api.js';
 import { colors, spacing, radius, typography, shadows } from '../../theme.js';
 import PromptBar from './PromptBar.jsx';
+import MarkdownRenderer from './MarkdownRenderer.jsx';
 
 /**
  * Narrow chat column inside a thread tab. Reuses the same SSE plumbing as
@@ -94,8 +95,50 @@ function ExpandableToolResult({ part }) {
   );
 }
 
-function AssistantBubble({ message }) {
+function PinToCanvasButton({ onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      title="Pin to canvas"
+      style={{
+        position: 'absolute', top: 4, right: 4,
+        background: 'none', border: `1px solid transparent`,
+        borderRadius: radius.sm, padding: '2px 5px',
+        fontSize: 11, cursor: 'pointer',
+        color: colors.textMuted, opacity: 0,
+        transition: 'opacity 0.15s ease',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = colors.border;
+        e.currentTarget.style.color = colors.primary;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'transparent';
+        e.currentTarget.style.color = colors.textMuted;
+      }}
+    >
+      ⧉
+    </button>
+  );
+}
+
+function AssistantBubble({ message, onPinToCanvas }) {
   const parts = message.parts || [{ type: 'text', content: message.content || '' }];
+  const textParts = parts.filter((p) => p.type === 'text' && p.content?.trim());
+
+  const handlePin = () => {
+    if (!onPinToCanvas || textParts.length === 0) return;
+    const fullText = textParts.map((p) => p.content).join('\n\n');
+    const title = fullText.slice(0, 50).replace(/[#*_\n]/g, '').trim();
+    onPinToCanvas({
+      id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      title: title.length < fullText.length ? `${title}…` : title,
+      subtitle: 'Analysis',
+      type: 'markdown',
+      content: fullText,
+    });
+  };
+
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: spacing.sm, gap: spacing.xs }}>
       <div style={{
@@ -124,17 +167,30 @@ function AssistantBubble({ message }) {
             return <ExpandableToolResult key={i} part={part} />;
           }
           return (
-            <div key={i} style={{
+            <div key={i} className="assistant-text-bubble" style={{
+              position: 'relative',
               background: colors.bgCard,
               borderRadius: `${radius.sm}px ${radius.lg}px ${radius.lg}px ${radius.lg}px`,
               border: `1px solid ${colors.border}`,
               padding: `${spacing.sm}px ${spacing.md}px`,
               fontFamily: typography.fontFamily,
               fontSize: typography.fontSizes.sm,
-              color: colors.textPrimary, lineHeight: 1.6, whiteSpace: 'pre-wrap',
+              color: colors.textPrimary, lineHeight: 1.6,
               boxShadow: shadows.sm, wordBreak: 'break-word',
-            }}>
-              {part.content || ''}
+            }}
+            onMouseEnter={(e) => {
+              const btn = e.currentTarget.querySelector('button');
+              if (btn) btn.style.opacity = '1';
+            }}
+            onMouseLeave={(e) => {
+              const btn = e.currentTarget.querySelector('button');
+              if (btn) btn.style.opacity = '0';
+            }}
+            >
+              <MarkdownRenderer text={part.content || ''} />
+              {!message.streaming && textParts.length > 0 && (
+                <PinToCanvasButton onClick={handlePin} />
+              )}
             </div>
           );
         })}
@@ -294,6 +350,12 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.id]);
 
+  const pinToCanvas = useCallback((artifact) => {
+    onUpdateTab(tab.id, (t) => ({
+      artifacts: [...(t.artifacts || []), artifact],
+    }));
+  }, [onUpdateTab, tab.id]);
+
   const lastMsg = messages[messages.length - 1];
   const isThinking = streaming && lastMsg?.role === 'assistant' && (lastMsg?.parts?.length || 0) === 0;
 
@@ -322,7 +384,7 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
         {messages.map((msg) => (
           msg.role === 'user'
             ? <UserBubble key={msg.id} message={msg} />
-            : <AssistantBubble key={msg.id} message={msg} />
+            : <AssistantBubble key={msg.id} message={msg} onPinToCanvas={pinToCanvas} />
         ))}
         {isThinking && <ThinkingIndicator />}
       </div>

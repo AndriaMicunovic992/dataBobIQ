@@ -58,7 +58,13 @@ async def build_ai_context(
     )
     from app.duckdb_engine import execute_query, view_name_for
 
-    parts: list[str] = ["<data_context>"]
+    parts: list[str] = [
+        "<data_context>",
+        "<!-- This is your complete data model. Use dimension types and cardinalities ",
+        "     to plan queries: date/timestamp types support date_trunc; low-cardinality ",
+        "     string columns are good for group_by; high-cardinality columns need filters. ",
+        "     Measures show the numeric columns you can aggregate. -->",
+    ]
 
     # ------------------------------------------------------------------ #
     # All active datasets in this model                                    #

@@ -97,6 +97,11 @@ def _translate_event(raw: dict[str, Any]) -> dict[str, Any]:
         info = data if isinstance(data, dict) else {}
         return {"type": "scenario_created", "name": info.get("name", "")}
 
+    # Special tool events that should also surface as tool_result in the UI
+    if event_type in ("scenario_rules", "knowledge_saved", "mapping_suggested"):
+        info = data if isinstance(data, dict) else {}
+        return {"type": "tool_result", "name": info.get("tool", event_type), "content": json.dumps(info.get("result", ""), default=str)}
+
     if event_type == "done":
         return {"type": "done"}
 
@@ -116,6 +121,8 @@ async def _sse_generator(
     dataset_map: dict[str, str] | None = None,
 ) -> AsyncGenerator[str, None]:
     """Wrap chat_engine.stream_chat() events as SSE-formatted strings."""
+    done_sent = False
+
     try:
         history = [{"role": m.role, "content": m.content} for m in request.history]
         async for event_str in stream_chat(
@@ -131,6 +138,8 @@ async def _sse_generator(
             try:
                 raw_event = json.loads(event_str)
                 translated = _translate_event(raw_event)
+                if translated.get("type") == "done":
+                    done_sent = True
                 yield f"data: {json.dumps(translated)}\n\n"
             except (json.JSONDecodeError, TypeError):
                 yield f"data: {event_str}\n\n"
@@ -139,6 +148,9 @@ async def _sse_generator(
         error_event: dict[str, Any] = {"type": "error", "data": str(exc)}
         yield f"data: {json.dumps(error_event)}\n\n"
     finally:
+        # Ensure the frontend always gets a terminal done + [DONE] pair.
+        if not done_sent:
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
         yield "data: [DONE]\n\n"
 
 

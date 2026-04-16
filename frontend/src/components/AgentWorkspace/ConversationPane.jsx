@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { streamChat } from '../../api.js';
 import { colors, spacing, radius, typography, shadows } from '../../theme.js';
 import PromptBar from './PromptBar.jsx';
-import StructuredMessage from './StructuredMessage.jsx';
+import StructuredMessage, { parseStructured } from './StructuredMessage.jsx';
 
 /**
  * Narrow chat column inside a thread tab. Reuses the same SSE plumbing as
@@ -217,9 +217,9 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   const [streaming, setStreaming] = useState(false);
   const scrollRef = useRef(null);
   const stopRef = useRef(null);
-  // Accumulate artifact-worthy results during a turn; only the last one
-  // gets auto-added to the canvas when the turn finishes (the "final output").
   const pendingArtifactRef = useRef(null);
+  const turnTextRef = useRef('');
+  const hadToolRef = useRef(false);
   const messages = tab.messages || [];
 
   useEffect(() => {
@@ -230,6 +230,7 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   const makeHandler = (assistantId) => (event) => {
     if (event.type === 'text' || event.type === 'delta') {
       const chunk = event.text || event.delta || '';
+      turnTextRef.current += chunk;
       onUpdateTab(tab.id, (t) => ({
         messages: (t.messages || []).map((m) => {
           if (m.id !== assistantId) return m;
@@ -244,6 +245,8 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
         }),
       }));
     } else if (event.type === 'tool_use') {
+      hadToolRef.current = true;
+      turnTextRef.current = '';
       onUpdateTab(tab.id, (t) => ({
         messages: (t.messages || []).map((m) =>
           m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
@@ -255,8 +258,6 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
           m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
         ),
       }));
-      // Buffer artifact-worthy results — only the last one per turn gets
-      // auto-added to the canvas when the stream finishes.
       if (ARTIFACT_TOOLS.has(event.name) && event.content) {
         pendingArtifactRef.current = makeArtifact(event.name, event.content);
       }
@@ -265,9 +266,34 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
       qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
     } else if (event.type === 'done' || event.type === 'error') {
       setStreaming(false);
-      // Flush the pending artifact (final output) to the canvas.
-      const artifact = pendingArtifactRef.current;
+      const toolArtifact = pendingArtifactRef.current;
       pendingArtifactRef.current = null;
+      const finalText = turnTextRef.current.trim();
+      const hadTool = hadToolRef.current;
+      turnTextRef.current = '';
+      hadToolRef.current = false;
+
+      let artifact = null;
+      if (hadTool && finalText.length > 80) {
+        const parsed = parseStructured(finalText);
+        let title = 'Analysis';
+        if (parsed.output) {
+          const firstLine = parsed.output.split('\n').find((l) => l.trim() && !l.trim().startsWith('|') && !l.trim().startsWith('-'));
+          if (firstLine) title = firstLine.replace(/[#*_]/g, '').trim().slice(0, 50);
+        } else if (parsed.plain) {
+          title = parsed.plain.slice(0, 50).replace(/[#*_\n]/g, '').trim();
+        }
+        artifact = {
+          id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          title: title || 'Analysis',
+          subtitle: 'Analysis',
+          type: 'markdown',
+          content: finalText,
+        };
+      } else if (toolArtifact) {
+        artifact = toolArtifact;
+      }
+
       if (event.type === 'error') {
         onUpdateTab(tab.id, (t) => ({
           messages: (t.messages || []).map((m) => {
@@ -292,6 +318,10 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
 
   const sendMessage = useCallback((text) => {
     if (!text || streaming || !modelId) return;
+
+    turnTextRef.current = '';
+    hadToolRef.current = false;
+    pendingArtifactRef.current = null;
 
     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text };
     const assistantId = `a-${Date.now()}`;
@@ -323,6 +353,9 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     if (seedFiredRef.current) return;
     if (!tab.pendingSeed) return;
     seedFiredRef.current = true;
+    turnTextRef.current = '';
+    hadToolRef.current = false;
+    pendingArtifactRef.current = null;
 
     const seedText = tab.pendingSeed;
     const assistantId = `a-${Date.now()}`;

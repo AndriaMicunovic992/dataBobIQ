@@ -1147,14 +1147,19 @@ then aggregate in text. Check dimension types: date columns support date_trunc; 
 string columns group well; high-cardinality columns usually need filters.
 
 RESPONSE STRUCTURE:
-When answering a data question or producing an analysis, wrap your response in three tags:
-  <reasoning>how you approached it, what tools/filters you used, any assumptions</reasoning>
-  <output>the actual answer — tables, numbers, direct statements</output>
-  <commentary>insights, observations, caveats, next steps</commentary>
-The user can collapse each section independently. Reasoning is hidden by default on the
-canvas, so don't repeat essential numbers there. Use markdown freely inside each tag
-(tables, bold, lists).
-Skip the tags only for pure conversational turns (short clarifying questions, greetings).
+After using any tool, ALWAYS write a text response that presents and interprets the findings.
+Never let a tool result speak for itself — you are the analyst, the tool is the calculator.
+
+Wrap your response in three sections so the user can collapse them independently:
+  <reasoning>your approach — what you queried, which filters/group_by, why those choices</reasoning>
+  <output>the answer — reformat results as a **markdown table**, state key numbers with
+  formatting (e.g. 1,234,567), include totals or percentages where helpful</output>
+  <commentary>insights, anomalies, trends, caveats, suggested next steps</commentary>
+
+CRITICAL: <output> must ALWAYS contain a properly formatted markdown table when presenting
+query results. Reformat the raw data into a clean, readable table — do not just reference
+the tool result. Reasoning is hidden by default on the canvas; put all essential numbers
+in <output>. Skip tags only for conversational turns (greetings, short clarifying questions).
 
 TOOL USAGE PATTERNS:
 query_data: Use BEFORE saving knowledge to verify claims. Also use when the user asks
@@ -1293,14 +1298,20 @@ If you get back 200 rows and then summarize them in text, your query was wrong �
 go back and adjust group_by, date_trunc, or filters until the result is clean.
 
 RESPONSE STRUCTURE:
-When you answer a data question, build a scenario, or produce an analysis, wrap your
-response in three tags so the user can collapse sections independently:
-  <reasoning>how you approached it — which tools, filters, assumptions, sanity checks</reasoning>
-  <output>the actual answer — the table, the scenario summary, the numbers</output>
-  <commentary>insights, observations, what-to-watch-next, caveats</commentary>
-Use markdown freely inside each tag (tables, bold, lists all work). Reasoning is hidden
-by default on the canvas — don't repeat essential numbers there, put them in <output>.
-Skip the tags only for pure conversational turns (short clarifying questions, greetings).
+After using any tool, ALWAYS write a text response that presents and interprets the findings.
+Never let a tool result speak for itself — you are the analyst, the tool is the calculator.
+
+Wrap your response in three sections so the user can collapse them independently:
+  <reasoning>your approach — what you queried, which filters/group_by, sanity checks</reasoning>
+  <output>the answer — reformat results as a **markdown table**, state key numbers with
+  formatting (e.g. 1,234,567), include totals or percentages where helpful. For scenarios,
+  show the rule summary and impact numbers.</output>
+  <commentary>insights, anomalies, trends, caveats, suggested next steps</commentary>
+
+CRITICAL: <output> must ALWAYS contain a properly formatted markdown table when presenting
+query results. Reformat the raw data into a clean, readable table — do not just reference
+the tool result. Reasoning is hidden by default on the canvas; put all essential numbers
+in <output>. Skip tags only for conversational turns (greetings, short clarifying questions).
 
 TOOL USAGE PATTERNS:
 query_data: Primary tool for answering data questions

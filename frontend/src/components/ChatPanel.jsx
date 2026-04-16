@@ -157,7 +157,7 @@ function ThinkingIndicator() {
   );
 }
 
-export default function ChatPanel({ modelId, onClose, mode = 'data' }) {
+export default function ChatPanel({ modelId, onClose, mode = 'data', onExpand }) {
   // Mode is driven by the parent (App) based on the active tab:
   //   - MODELLING tabs (schema / knowledge) → 'data' (data agent)
   //   - Dashboard tabs                      → 'scenario' (scenario agent)
@@ -360,6 +360,15 @@ export default function ChatPanel({ modelId, onClose, mode = 'data' }) {
             {streaming ? 'Thinking...' : 'Ready'}
           </div>
         </div>
+        {onExpand && (
+          <button
+            onClick={onExpand}
+            title="Expand to Agent Workspace"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: colors.sidebarText, fontSize: 16, fontFamily: typography.fontFamily, padding: `0 ${spacing.xs}px`, lineHeight: 1 }}
+          >
+            ⤢
+          </button>
+        )}
         <button
           onClick={clearChat}
           title="Clear chat"

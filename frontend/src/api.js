@@ -57,6 +57,8 @@ export const executePivot = (config) => req('/pivot', json(config));
 export const createScenario = (modelId, data) =>
   req(`/models/${modelId}/scenarios`, json(data));
 export const listScenarios = (modelId) => req(`/models/${modelId}/scenarios`);
+export const getScenarioSummaries = (modelId) =>
+  req(`/models/${modelId}/scenarios/summaries`);
 export const getScenario = (id) => req(`/scenarios/${id}`);
 export const deleteScenario = (id) => req(`/scenarios/${id}`, { method: 'DELETE' });
 export const addRule = (scenarioId, rule) =>

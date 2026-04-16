@@ -105,3 +105,39 @@ class WaterfallStep(BaseModel):
     type: str  # start|delta|end
     is_total: bool
     delta_pct: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Agent Workspace summaries — the "scenario cockpit" payload
+# ---------------------------------------------------------------------------
+
+
+class SparklinePoint(BaseModel):
+    period: str
+    baseline: float
+    scenario: float
+
+
+class ScenarioHeadline(BaseModel):
+    measure: str
+    baseline: float
+    scenario: float
+    delta: float
+    delta_pct: float | None
+
+
+class ScenarioSummary(BaseModel):
+    id: str
+    name: str
+    color: str | None = None
+    rule_count: int
+    created_at: datetime
+    headline: ScenarioHeadline | None = None
+    sparkline: list[SparklinePoint] = []
+
+
+class ScenarioSummariesResponse(BaseModel):
+    model_id: str
+    measure: str | None = None
+    period_field: str | None = None
+    scenarios: list[ScenarioSummary] = []

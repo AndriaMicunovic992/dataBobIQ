@@ -1,5 +1,6 @@
 import { colors, spacing, radius, typography } from '../../theme.js';
 import ArtifactCard from './ArtifactCard.jsx';
+import MarkdownRenderer from './MarkdownRenderer.jsx';
 
 /**
  * Right-side artifact column for a thread tab. Renders structured results
@@ -65,15 +66,30 @@ export default function Canvas({ tab, onRemoveArtifact }) {
           onExport={stub('Export')}
           onRemove={() => onRemoveArtifact?.(a.id)}
         >
-          <ArtifactBody content={a.content} />
+          <ArtifactBody content={a.content} type={a.type} />
         </ArtifactCard>
       ))}
     </div>
   );
 }
 
-/** Render artifact content — tries table layout for row data, otherwise JSON. */
-function ArtifactBody({ content }) {
+/** Render artifact content — markdown text, table for row data, or JSON. */
+function ArtifactBody({ content, type }) {
+  if (type === 'markdown' && typeof content === 'string') {
+    return (
+      <div style={{
+        fontSize: typography.fontSizes.sm,
+        fontFamily: typography.fontFamily,
+        color: colors.textPrimary,
+        lineHeight: 1.6,
+        maxHeight: 500,
+        overflowY: 'auto',
+      }}>
+        <MarkdownRenderer text={content} />
+      </div>
+    );
+  }
+
   const rows = Array.isArray(content)
     ? content
     : (content?.rows && Array.isArray(content.rows)) ? content.rows : null;

@@ -75,11 +75,17 @@ export function useWorkspaceTabs(modelId) {
     }
   }, [modelId]);
 
-  // Persist whenever tabs change.
+  // Persist whenever tabs change — debounced to avoid blocking the main
+  // thread during chat streaming (text_delta fires hundreds of times per
+  // second, and JSON.stringify + sessionStorage.setItem on the full state
+  // is O(n) in content size).
   useEffect(() => {
     if (!modelId) return;
     if (hydratedFor.current !== modelId) return;
-    saveState(modelId, tabs, activeId);
+    const handle = setTimeout(() => {
+      saveState(modelId, tabs, activeId);
+    }, 500);
+    return () => clearTimeout(handle);
   }, [modelId, tabs, activeId]);
 
   const openThread = useCallback((init) => {

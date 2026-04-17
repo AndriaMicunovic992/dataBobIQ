@@ -7,7 +7,10 @@ import { colors, spacing, radius, typography, shadows, cardStyle, inputStyle, la
 import { Button } from './common/Button.jsx';
 import PivotTable from './PivotTable.jsx';
 import DashboardCard from './DashboardCard.jsx';
+import DashboardChartWidget from './DashboardChart.jsx';
 import WidgetConfigModal from './WidgetConfigModal.jsx';
+
+const CHART_TYPES = new Set(['bar', 'line', 'area']);
 
 const GRID_COLS = 12;
 const ROW_HEIGHT_PX = 80;
@@ -243,6 +246,8 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, metadat
       }}>
         {widget.widget_type === 'card' ? (
           <DashboardCard widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
+        ) : CHART_TYPES.has(widget.widget_type) ? (
+          <DashboardChartWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
         ) : (
           <DashboardTableWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
         )}
@@ -902,12 +907,14 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
         const endRow = (pos.row || 1) + (pos.rowSpan || 4);
         if (endRow > nextRow) nextRow = endRow;
       }
-      const isCard = widgetData.widget_type === 'card';
+      const wt = widgetData.widget_type;
+      const isCard = wt === 'card';
+      const isChart = CHART_TYPES.has(wt);
       const position = {
         col: 1,
         row: nextRow,
-        colSpan: isCard ? 3 : 6,
-        rowSpan: isCard ? 2 : 4,
+        colSpan: isCard ? 3 : isChart ? 6 : 6,
+        rowSpan: isCard ? 2 : isChart ? 4 : 4,
       };
       createMut.mutate({ ...widgetData, position }, { onSuccess: () => setEditingWidget(null) });
     }

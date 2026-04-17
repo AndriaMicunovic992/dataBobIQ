@@ -10,10 +10,22 @@ import PromptBar from './PromptBar.jsx';
 export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
   const {
     tabs, activeId, setActiveId,
-    openThread, closeTab, updateTab,
+    openThread, closeTab, updateTab, renameTab,
   } = useWorkspaceTabs(modelId);
 
   const activeTab = tabs.find((t) => t.id === activeId) || tabs[0];
+
+  const recentQuestions = tabs
+    .filter((t) => t.kind === 'thread')
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .flatMap((t) =>
+      (t.messages || [])
+        .filter((m) => m.role === 'user')
+        .map((m) => m.content)
+    )
+    .filter(Boolean)
+    .filter((q, i, arr) => arr.indexOf(q) === i)
+    .slice(0, 6);
 
   const handleOpenThread = useCallback((init) => {
     openThread(init);
@@ -53,6 +65,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
         activeId={activeId}
         onSelect={setActiveId}
         onClose={closeTab}
+        onRename={renameTab}
         onExit={onExit}
       />
 
@@ -64,6 +77,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
                 modelId={modelId}
                 onOpenThread={handleOpenThread}
                 onOpenDashboard={onOpenDashboard}
+                recentQuestions={recentQuestions}
               />
             </div>
             <PromptBar

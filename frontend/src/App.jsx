@@ -620,10 +620,8 @@ export default function App() {
         {renderContent()}
       </main>
 
-      {/* Chat panel — the agent persona is dictated by where the user is:
-          MODELLING tabs get the data agent, dashboards get the scenario agent.
-          No more in-panel toggle. */}
-      {chatOpen && selectedModelId && (
+      {/* Chat panel — hidden in Agent Workspace (it IS the chat). */}
+      {chatOpen && selectedModelId && activeTab !== AGENT_WORKSPACE_TAB && (
         <ChatPanel
           modelId={selectedModelId}
           onClose={() => setChatOpen(false)}
@@ -639,8 +637,8 @@ export default function App() {
         />
       )}
 
-      {/* Floating chat FAB — bottom-right, only when a model is selected and chat closed */}
-      {selectedModelId && !chatOpen && (
+      {/* Floating chat FAB — hidden in Agent Workspace */}
+      {selectedModelId && !chatOpen && activeTab !== AGENT_WORKSPACE_TAB && (
         <button
           onClick={() => setChatOpen(true)}
           title="Open AI Chat"

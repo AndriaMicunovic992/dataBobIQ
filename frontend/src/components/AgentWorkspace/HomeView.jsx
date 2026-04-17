@@ -9,12 +9,6 @@ import ScenarioCard from './ScenarioCard.jsx';
  * thread tab via the parent-supplied `onOpenThread` callback.
  */
 
-const TRY_ASKING = [
-  'Which scenario assumes the most aggressive revenue growth?',
-  'Why is Base Case tracking below actuals in Q4?',
-  'Draft a CFO commentary comparing my top two scenarios.',
-  'What would happen if COGS increased 5% across the board?',
-];
 
 function Greeting() {
   const hour = new Date().getHours();
@@ -75,7 +69,7 @@ function SuggestionChip({ text, onClick }) {
   );
 }
 
-export default function HomeView({ modelId, onOpenThread, onOpenDashboard }) {
+export default function HomeView({ modelId, onOpenThread, onOpenDashboard, recentQuestions = [] }) {
   const { data, isLoading, isError, error } = useScenarioSummaries(modelId);
   const scenarios = data?.scenarios || [];
 
@@ -121,14 +115,6 @@ export default function HomeView({ modelId, onOpenThread, onOpenDashboard }) {
           }}>
             Your scenarios
           </h2>
-          {data?.measure && (
-            <span style={{
-              fontSize: typography.fontSizes.xs,
-              color: colors.textMuted,
-            }}>
-              Headline measure: {data.measure}
-            </span>
-          )}
         </div>
 
         {isLoading && (
@@ -173,24 +159,26 @@ export default function HomeView({ modelId, onOpenThread, onOpenDashboard }) {
         )}
       </section>
 
-      {/* Suggestion chips */}
-      <section>
-        <h2 style={{
-          margin: `0 0 ${spacing.sm}px`,
-          fontSize: typography.fontSizes.sm,
-          fontWeight: typography.fontWeights.medium,
-          color: colors.textMuted,
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-        }}>
-          Try asking
-        </h2>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: spacing.sm }}>
-          {TRY_ASKING.map((text) => (
-            <SuggestionChip key={text} text={text} onClick={() => handleChipClick(text)} />
-          ))}
-        </div>
-      </section>
+      {/* Recent questions */}
+      {recentQuestions.length > 0 && (
+        <section>
+          <h2 style={{
+            margin: `0 0 ${spacing.sm}px`,
+            fontSize: typography.fontSizes.sm,
+            fontWeight: typography.fontWeights.medium,
+            color: colors.textMuted,
+            textTransform: 'uppercase',
+            letterSpacing: '0.08em',
+          }}>
+            Recent questions
+          </h2>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: spacing.sm }}>
+            {recentQuestions.map((text) => (
+              <SuggestionChip key={text} text={text} onClick={() => handleChipClick(text)} />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

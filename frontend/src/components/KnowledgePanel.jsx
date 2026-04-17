@@ -5,6 +5,8 @@ import { colors, spacing, radius, typography, shadows, cardStyle, inputStyle, la
 import { Button } from './common/Button.jsx';
 import { Badge } from './common/Badge.jsx';
 import { Card } from './common/Card.jsx';
+import MentionEditor from './common/MentionEditor.jsx';
+import { splitWithMentions } from '../utils/mentions.js';
 
 const KNOWLEDGE_TYPES = [
   { value: 'business_rule', label: 'Business Rule', icon: '⚙', color: colors.primary },
@@ -20,6 +22,51 @@ const CONFIDENCE_LEVELS = [
   { value: 'rejected', label: 'Rejected', variant: 'danger' },
 ];
 
+function MentionChip({ title, id, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Jump to "${title}"`}
+      style={{
+        display: 'inline-flex', alignItems: 'center',
+        padding: `0 ${spacing.xs}px`,
+        background: colors.primary + '18',
+        color: colors.primary,
+        border: `1px solid ${colors.primary}30`,
+        borderRadius: radius.sm,
+        fontSize: typography.fontSizes.xs,
+        fontWeight: typography.fontWeights.medium,
+        fontFamily: typography.fontFamily,
+        cursor: onClick ? 'pointer' : 'default',
+        margin: '0 2px',
+        lineHeight: 1.5,
+        verticalAlign: 'baseline',
+      }}
+    >
+      @{title}
+    </button>
+  );
+}
+
+function MentionText({ text, onMentionClick }) {
+  const parts = splitWithMentions(text || '');
+  return (
+    <>
+      {parts.map((p, i) =>
+        typeof p === 'string'
+          ? <span key={i}>{p}</span>
+          : <MentionChip
+              key={i}
+              title={p.title}
+              id={p.id}
+              onClick={onMentionClick ? () => onMentionClick(p.id) : undefined}
+            />
+      )}
+    </>
+  );
+}
+
 function KnowledgeTypeIcon({ type }) {
   const t = KNOWLEDGE_TYPES.find((k) => k.value === type) || KNOWLEDGE_TYPES[3];
   return (
@@ -34,7 +81,7 @@ function KnowledgeTypeIcon({ type }) {
   );
 }
 
-function EditKnowledgeForm({ entry, onCancel, onSaved }) {
+function EditKnowledgeForm({ entry, onCancel, onSaved, entries }) {
   const [title, setTitle] = useState(entry.title || '');
   const [content, setContent] = useState(entry.content || '');
   const [type, setType] = useState(entry.knowledge_type || 'business_rule');
@@ -85,11 +132,12 @@ function EditKnowledgeForm({ entry, onCancel, onSaved }) {
           </select>
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={labelStyle}>Content *</label>
-          <textarea
-            style={{ ...inputStyle, height: 100, resize: 'vertical' }}
+          <label style={labelStyle}>Content * <span style={{ color: colors.textMuted, fontWeight: typography.fontWeights.regular }}>(type @ to link another entry)</span></label>
+          <MentionEditor
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={setContent}
+            entries={entries}
+            excludeId={entry.id}
           />
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
@@ -123,7 +171,7 @@ function EditKnowledgeForm({ entry, onCancel, onSaved }) {
   );
 }
 
-function KnowledgeCard({ entry, onDelete, onUpdated }) {
+function KnowledgeCard({ entry, onDelete, onUpdated, entries, onMentionClick }) {
   const [hovered, setHovered] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -136,6 +184,7 @@ function KnowledgeCard({ entry, onDelete, onUpdated }) {
     return (
       <EditKnowledgeForm
         entry={entry}
+        entries={entries}
         onCancel={() => setEditing(false)}
         onSaved={() => { setEditing(false); onUpdated?.(); }}
       />
@@ -145,11 +194,13 @@ function KnowledgeCard({ entry, onDelete, onUpdated }) {
   const typeInfo = KNOWLEDGE_TYPES.find((t) => t.value === entry.knowledge_type) || KNOWLEDGE_TYPES[3];
   const confInfo = CONFIDENCE_LEVELS.find((c) => c.value === entry.confidence) || { variant: 'muted', label: entry.confidence };
   const created = new Date(entry.created_at).toLocaleDateString();
-  const hasLongContent = entry.content?.length > 160;
-  const displayContent = hasLongContent && !expanded ? entry.content.slice(0, 160) + '...' : entry.content;
+  const rawContent = entry.content || '';
+  const hasLongContent = rawContent.length > 160;
+  const displayContent = hasLongContent && !expanded ? rawContent.slice(0, 160) + '...' : rawContent;
 
   return (
     <div
+      id={`knowledge-${entry.id}`}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{
@@ -177,7 +228,7 @@ function KnowledgeCard({ entry, onDelete, onUpdated }) {
             margin: 0, fontSize: typography.fontSizes.sm,
             color: colors.textSecondary, fontFamily: typography.fontFamily, lineHeight: 1.6,
           }}>
-            {displayContent}
+            <MentionText text={displayContent} onMentionClick={onMentionClick} />
             {hasLongContent && (
               <button
                 onClick={() => setExpanded((v) => !v)}
@@ -232,7 +283,7 @@ function KnowledgeCard({ entry, onDelete, onUpdated }) {
   );
 }
 
-function AddKnowledgeForm({ modelId, onClose, onSuccess }) {
+function AddKnowledgeForm({ modelId, onClose, onSuccess, entries }) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [type, setType] = useState('business_rule');
@@ -289,12 +340,12 @@ function AddKnowledgeForm({ modelId, onClose, onSuccess }) {
           </select>
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
-          <label style={labelStyle}>Content *</label>
-          <textarea
-            style={{ ...inputStyle, height: 100, resize: 'vertical' }}
-            placeholder="Describe the rule, metric definition, or context..."
+          <label style={labelStyle}>Content * <span style={{ color: colors.textMuted, fontWeight: typography.fontWeights.regular }}>(type @ to link another entry)</span></label>
+          <MentionEditor
             value={content}
-            onChange={(e) => setContent(e.target.value)}
+            onChange={setContent}
+            entries={entries}
+            placeholder="Describe the rule, metric definition, or context..."
           />
         </div>
         <div style={{ gridColumn: '1 / -1' }}>
@@ -381,6 +432,7 @@ export default function KnowledgePanel({ modelId }) {
       {showForm && (
         <AddKnowledgeForm
           modelId={modelId}
+          entries={entries}
           onClose={() => setShowForm(false)}
           onSuccess={() => qc.invalidateQueries({ queryKey: ['knowledge', modelId] })}
         />
@@ -462,8 +514,18 @@ export default function KnowledgePanel({ modelId }) {
                 <KnowledgeCard
                   key={entry.id}
                   entry={entry}
+                  entries={entries}
                   onDelete={() => qc.invalidateQueries({ queryKey: ['knowledge', modelId] })}
                   onUpdated={() => qc.invalidateQueries({ queryKey: ['knowledge', modelId] })}
+                  onMentionClick={(id) => {
+                    const el = document.getElementById(`knowledge-${id}`);
+                    if (el) {
+                      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      el.style.transition = 'box-shadow 0.3s';
+                      el.style.boxShadow = `0 0 0 3px ${colors.primary}40`;
+                      setTimeout(() => { el.style.boxShadow = ''; }, 1200);
+                    }
+                  }}
                 />
               ))}
             </div>

@@ -140,7 +140,9 @@ _DATA_TOOLS = [
         "name": "list_knowledge",
         "description": (
             "List existing knowledge entries. Check at the start of conversations "
-            "to see what's already documented and avoid duplicates."
+            "to see what's already documented and avoid duplicates.\n\n"
+            "Entries may reference each other via @[Title](knowledge:id) tokens; "
+            "referenced entries are auto-resolved and included in the response."
         ),
         "input_schema": {
             "type": "object",
@@ -518,6 +520,10 @@ _SCENARIO_TOOLS = [
             "List knowledge entries (definitions, relationships, calculations, notes).\n\n"
             "ALWAYS check this before creating scenario rules to find the correct "
             "filter columns and values for business terms like 'revenue' or 'COGS'.\n\n"
+            "Entries may reference each other via @[Title](knowledge:id) tokens in "
+            "their content. When this happens the referenced entries are automatically "
+            "included in the response so you have the full chain of definitions — do "
+            "not guess at terms, treat the linked entries as authoritative.\n\n"
             "Also use when the user asks 'what do you know?' or 'what's in the knowledge base?'"
         ),
         "input_schema": {
@@ -777,6 +783,10 @@ async def _execute_tool(
     elif tool_name == "list_knowledge":
         from app.database import AsyncSessionLocal
         from app.models.metadata import KnowledgeEntry
+        from app.services.knowledge_refs import (
+            collect_reference_ids,
+            extract_ids_from_content,
+        )
         from sqlalchemy import select as sa_select
         try:
             async with AsyncSessionLocal() as db:
@@ -793,7 +803,25 @@ async def _execute_tool(
                 if search_text:
                     query = query.where(KnowledgeEntry.plain_text.ilike(f"%{search_text}%"))
                 result = await db.execute(query)
-                entries = result.scalars().all()
+                entries = list(result.scalars().all())
+
+                # Resolve @-mention references. If any returned entry links to
+                # another entry via an @[Title](knowledge:id) token, fetch that
+                # referenced entry and splice it into the response so the agent
+                # sees transitive definitions without guessing.
+                existing_ids = {e.id for e in entries}
+                ref_ids = [
+                    rid for rid in collect_reference_ids(entries)
+                    if rid not in existing_ids
+                ]
+                if ref_ids:
+                    ref_query = sa_select(KnowledgeEntry).where(
+                        KnowledgeEntry.id.in_(ref_ids),
+                        KnowledgeEntry.model_id == model_id,
+                    )
+                    ref_result = await db.execute(ref_query)
+                    entries.extend(ref_result.scalars().all())
+
                 return {
                     "entries": [
                         {
@@ -803,6 +831,7 @@ async def _execute_tool(
                             "content": e.content,
                             "confidence": e.confidence,
                             "source": e.source,
+                            "references": extract_ids_from_content(e.content),
                         }
                         for e in entries
                     ],

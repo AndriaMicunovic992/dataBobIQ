@@ -811,7 +811,7 @@ function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onFor
 // ---------------------------------------------------------------------------
 // Main dashboard view
 // ---------------------------------------------------------------------------
-export default function DashboardView({ dashboardId, modelId, onOpenAgentWorkspace }) {
+export default function DashboardView({ dashboardId, modelId, initialScenarioId }) {
   const { data: dashboard, isLoading } = useDashboard(dashboardId);
   const { data: scenarios = [] } = useScenarios(modelId);
   const { data: metadata } = useMetadata(modelId);
@@ -821,14 +821,18 @@ export default function DashboardView({ dashboardId, modelId, onOpenAgentWorkspa
   const saveLayoutMut = useSaveLayout(dashboardId);
 
   const [editingWidget, setEditingWidget] = useState(null);
-  const [scenarioId, setScenarioId] = useState('');
+  const [scenarioId, setScenarioId] = useState(initialScenarioId || '');
   const [yearFilter, setYearFilter] = useState('');
   const [localPositions, setLocalPositions] = useState({});
   const [sidebarHovered, setSidebarHovered] = useState(false);
   // When a rule form is open inside the sidebar we lock it expanded so the
   // user doesn't lose their in-progress edit by moving the mouse away.
   const [sidebarFormOpen, setSidebarFormOpen] = useState(false);
-  const sidebarExpanded = sidebarHovered || sidebarFormOpen;
+  // Pin the rules sidebar open when we land here from DI with a preselected
+  // scenario — the user just clicked the scenario to edit it, so showing
+  // the rules up front is the whole point. Click anywhere to dismiss.
+  const [sidebarPinned, setSidebarPinned] = useState(!!initialScenarioId);
+  const sidebarExpanded = sidebarHovered || sidebarFormOpen || sidebarPinned;
 
   // Collect year values from metadata. Looks for a dimension named "year" on any dataset.
   const availableYears = useMemo(() => {
@@ -964,11 +968,6 @@ export default function DashboardView({ dashboardId, modelId, onOpenAgentWorkspa
             </select>
           </div>
 
-          {onOpenAgentWorkspace && (
-            <Button variant="secondary" size="sm" onClick={onOpenAgentWorkspace}>
-              Decision Intelligence ⤢
-            </Button>
-          )}
           <Button variant="primary" size="sm" onClick={() => setEditingWidget('new')}>
             + Add Widget
           </Button>
@@ -1034,7 +1033,12 @@ export default function DashboardView({ dashboardId, modelId, onOpenAgentWorkspa
           collapsing out from under them. */}
       <aside
         onMouseEnter={() => setSidebarHovered(true)}
-        onMouseLeave={() => setSidebarHovered(false)}
+        onMouseLeave={() => {
+          setSidebarHovered(false);
+          // Once the user has interacted with the pinned sidebar and moved
+          // away, release the pin so it behaves normally from then on.
+          if (sidebarPinned) setSidebarPinned(false);
+        }}
         style={{
           // When a rule form is open, give inputs serious room. When
           // hovered without a form, show the full card layout. Otherwise

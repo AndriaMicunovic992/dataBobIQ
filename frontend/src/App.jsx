@@ -304,7 +304,18 @@ function Sidebar({ models, selectedModelId, onSelectModel, activeTab, onTabChang
       {/* Navigation tabs */}
       {selectedModelId && (
         <nav style={{ padding: `${spacing.sm}px ${spacing.sm}px`, flex: 1 }}>
-          {/* Dashboards section — first */}
+          {/* Decision Intelligence — the landing page, always at the top */}
+          <NavItem
+            icon={'\u25C9'}
+            label="Decision Intelligence"
+            active={activeTab === AGENT_WORKSPACE_TAB}
+            onClick={() => onTabChange(AGENT_WORKSPACE_TAB)}
+          />
+
+          {/* Divider under DI */}
+          <div style={{ margin: `${spacing.sm}px 0`, borderTop: `1px solid rgba(255,255,255,0.06)` }} />
+
+          {/* Dashboards section */}
           <SectionHeader label="Dashboards" />
           {(dashboards || []).map((dash) => {
             const dashTabId = `dashboard-${dash.id}`;
@@ -432,6 +443,10 @@ function NavItem({ icon, label, active, onClick }) {
 export default function App() {
   const [selectedModelId, setSelectedModelId] = useState(null);
   const [activeTab, setActiveTab] = useState('schema');
+  // One-shot handoff when DI navigates to a dashboard with a scenario
+  // preselected. Consumed by the DashboardView as initialScenarioId on mount,
+  // then cleared so subsequent tab switches don't re-apply it.
+  const [pendingScenarioForDashboard, setPendingScenarioForDashboard] = useState(null); // { dashboardId, scenarioId }
   const [chatOpen, setChatOpen] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -471,27 +486,18 @@ export default function App() {
 
   const hasDatasets = datasets.length > 0;
 
-  // Once per model-open, if a dashboard exists and the user hasn't
-  // navigated away from the default 'schema' landing yet, jump to the
-  // first dashboard automatically.
-  const autoRoutedModelRef = useRef(null);
+  // Clear the pending scenario handoff once the dashboard has mounted and
+  // consumed it — otherwise switching tabs later would re-apply the stale id.
   useEffect(() => {
-    if (!selectedModelId) return;
-    if (autoRoutedModelRef.current === selectedModelId) return;
-    if (!dashboards || dashboards.length === 0) return;
-    if (activeTab !== 'schema') return;
-    autoRoutedModelRef.current = selectedModelId;
-    setActiveTab(`dashboard-${dashboards[0].id}`);
-  }, [selectedModelId, dashboards, activeTab]);
+    if (!pendingScenarioForDashboard) return;
+    if (activeTab !== `dashboard-${pendingScenarioForDashboard.dashboardId}`) return;
+    const handle = setTimeout(() => setPendingScenarioForDashboard(null), 0);
+    return () => clearTimeout(handle);
+  }, [activeTab, pendingScenarioForDashboard]);
 
   const handleSelectModel = useCallback((id) => {
     setSelectedModelId(id);
-    if (id) {
-      setActiveTab('schema');
-    } else {
-      // Reset auto-route memory so re-opening a model re-runs the jump.
-      autoRoutedModelRef.current = null;
-    }
+    if (id) setActiveTab(AGENT_WORKSPACE_TAB);
   }, []);
 
   const handleUploadSuccess = useCallback(() => {
@@ -556,11 +562,14 @@ export default function App() {
       return (
         <AgentWorkspace
           modelId={selectedModelId}
+          dashboards={dashboards}
           onExit={() => setActiveTab(dashboards?.[0] ? `dashboard-${dashboards[0].id}` : 'schema')}
-          onOpenDashboard={() => {
-            // Phase 1: just route back to the first dashboard. Scenario
-            // preselection on the dashboard side lands in Phase 2.
-            if (dashboards?.[0]) setActiveTab(`dashboard-${dashboards[0].id}`);
+          onOpenDashboard={(dashboardId, scenarioId) => {
+            if (!dashboardId) return;
+            if (scenarioId) {
+              setPendingScenarioForDashboard({ dashboardId, scenarioId });
+            }
+            setActiveTab(`dashboard-${dashboardId}`);
           }}
         />
       );
@@ -569,11 +578,16 @@ export default function App() {
     // Dashboard tab
     if (activeTab.startsWith('dashboard-')) {
       const dashboardId = activeTab.replace('dashboard-', '');
+      const initialScenarioId =
+        pendingScenarioForDashboard?.dashboardId === dashboardId
+          ? pendingScenarioForDashboard.scenarioId
+          : undefined;
       return (
         <DashboardView
+          key={`${dashboardId}:${initialScenarioId || ''}`}
           dashboardId={dashboardId}
           modelId={selectedModelId}
-          onOpenAgentWorkspace={() => setActiveTab(AGENT_WORKSPACE_TAB)}
+          initialScenarioId={initialScenarioId}
         />
       );
     }

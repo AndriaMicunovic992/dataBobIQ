@@ -1,14 +1,20 @@
-import { useScenarioSummaries } from '../../hooks/useScenarios.js';
-import { colors, spacing, radius, typography, shadows } from '../../theme.js';
-import ScenarioCard from './ScenarioCard.jsx';
+import { useScenarios } from '../../hooks/useScenarios.js';
+import { colors, spacing, radius, typography, shadows, transitions } from '../../theme.js';
 
 /**
- * The landing view inside the Agent Workspace. Greeting strip, a grid of
- * scenario cockpit cards, and a short row of suggested prompts to prime the
- * conversation. Clicking "Ask" on any card or a suggestion chip opens a new
- * thread tab via the parent-supplied `onOpenThread` callback.
+ * Decision Intelligence landing page for a model.
+ *
+ * Layout:
+ *   - Greeting
+ *   - Scenarios grid: rules-first cards (top 3 rules + "+N more")
+ *       clicking a card → opens the default dashboard with that scenario
+ *       pre-selected and the rules drawer pinned open
+ *   - Dashboards grid: clicking opens the dashboard
+ *   - Recent questions strip (if any)
+ *
+ * The DI home is the landing page for every model, so we keep it information-
+ * dense but low-noise: no carousels, no sparklines, no hard-coded prompts.
  */
-
 
 function Greeting() {
   const hour = new Date().getHours();
@@ -32,9 +38,212 @@ function Greeting() {
         color: colors.textSecondary,
         fontFamily: typography.fontFamily,
       }}>
-        Your scenarios at a glance — ask a question, open a thread, or jump back to the dashboard.
+        Scenarios and dashboards for this model — click a scenario to edit its
+        rules on a dashboard, or ask a question below.
       </p>
     </div>
+  );
+}
+
+function formatRule(rule) {
+  if (rule.name && rule.name.trim()) return rule.name;
+  // Fallback: derive from rule shape
+  const field = rule.target_field || 'field';
+  const adj = rule.adjustment || {};
+  if (rule.rule_type === 'multiplier') {
+    const factor = adj.factor;
+    if (typeof factor === 'number') {
+      const pct = ((factor - 1) * 100).toFixed(0);
+      const sign = factor >= 1 ? '+' : '';
+      return `${field} ${sign}${pct}%`;
+    }
+  }
+  if (rule.rule_type === 'offset') {
+    const offset = adj.offset;
+    if (typeof offset === 'number') {
+      const sign = offset >= 0 ? '+' : '';
+      return `${field} ${sign}${offset.toLocaleString()}`;
+    }
+  }
+  if (rule.rule_type === 'set_value') {
+    return `${field} = ${adj.value ?? '?'}`;
+  }
+  return `${field} (${rule.rule_type})`;
+}
+
+function ScenarioCard({ scenario, onClick }) {
+  const rules = scenario.rules || [];
+  const color = scenario.color || colors.primary;
+  const shown = rules.slice(0, 3);
+  const extra = rules.length - shown.length;
+
+  return (
+    <button
+      onClick={() => onClick(scenario)}
+      style={{
+        textAlign: 'left',
+        background: colors.bgCard,
+        borderRadius: radius.lg,
+        border: `1px solid ${colors.border}`,
+        boxShadow: shadows.sm,
+        padding: spacing.md,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: spacing.sm,
+        transition: transitions.fast,
+        cursor: 'pointer',
+        minHeight: 180,
+        fontFamily: typography.fontFamily,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = shadows.md;
+        e.currentTarget.style.borderColor = color;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = shadows.sm;
+        e.currentTarget.style.borderColor = colors.border;
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+        <div style={{
+          width: 10, height: 10, borderRadius: radius.full,
+          background: color, flexShrink: 0,
+        }} />
+        <h4 style={{
+          margin: 0, flex: 1, minWidth: 0,
+          fontSize: typography.fontSizes.md,
+          fontWeight: typography.fontWeights.semibold,
+          color: colors.textPrimary,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {scenario.name}
+        </h4>
+        <span style={{
+          fontSize: typography.fontSizes.xs,
+          color: colors.textMuted,
+          flexShrink: 0,
+        }}>
+          {rules.length} {rules.length === 1 ? 'rule' : 'rules'}
+        </span>
+      </div>
+
+      {rules.length === 0 ? (
+        <div style={{
+          fontSize: typography.fontSizes.xs,
+          color: colors.textMuted,
+          fontStyle: 'italic',
+          flex: 1,
+        }}>
+          No rules yet — click to add some on a dashboard.
+        </div>
+      ) : (
+        <ul style={{
+          margin: 0, padding: 0, listStyle: 'none',
+          display: 'flex', flexDirection: 'column', gap: 2,
+          flex: 1,
+        }}>
+          {shown.map((rule) => (
+            <li key={rule.id} style={{
+              fontSize: typography.fontSizes.sm,
+              color: colors.textSecondary,
+              display: 'flex', alignItems: 'baseline', gap: spacing.xs,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>
+              <span style={{ color: color, fontSize: 10 }}>●</span>
+              <span style={{
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                minWidth: 0, flex: 1,
+              }}>
+                {formatRule(rule)}
+              </span>
+            </li>
+          ))}
+          {extra > 0 && (
+            <li style={{
+              fontSize: typography.fontSizes.xs,
+              color: colors.textMuted,
+              marginTop: 2,
+            }}>
+              +{extra} more
+            </li>
+          )}
+        </ul>
+      )}
+
+      <div style={{
+        marginTop: 'auto',
+        fontSize: typography.fontSizes.xs,
+        color: color,
+        fontWeight: typography.fontWeights.medium,
+      }}>
+        Edit rules →
+      </div>
+    </button>
+  );
+}
+
+function DashboardCard({ dashboard, onClick }) {
+  const widgetCount = (dashboard.widgets || []).length;
+  return (
+    <button
+      onClick={() => onClick(dashboard)}
+      style={{
+        textAlign: 'left',
+        background: colors.bgCard,
+        borderRadius: radius.lg,
+        border: `1px solid ${colors.border}`,
+        boxShadow: shadows.sm,
+        padding: spacing.md,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: spacing.xs,
+        transition: transitions.fast,
+        cursor: 'pointer',
+        minHeight: 110,
+        fontFamily: typography.fontFamily,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.boxShadow = shadows.md;
+        e.currentTarget.style.borderColor = colors.borderFocus;
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.boxShadow = shadows.sm;
+        e.currentTarget.style.borderColor = colors.border;
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
+        <span style={{ fontSize: 14, color: colors.primary }}>▦</span>
+        <h4 style={{
+          margin: 0, flex: 1, minWidth: 0,
+          fontSize: typography.fontSizes.md,
+          fontWeight: typography.fontWeights.semibold,
+          color: colors.textPrimary,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {dashboard.name}
+        </h4>
+      </div>
+      {dashboard.description && (
+        <p style={{
+          margin: 0,
+          fontSize: typography.fontSizes.sm,
+          color: colors.textSecondary,
+          display: '-webkit-box',
+          WebkitLineClamp: 2,
+          WebkitBoxOrient: 'vertical',
+          overflow: 'hidden',
+        }}>
+          {dashboard.description}
+        </p>
+      )}
+      <div style={{
+        marginTop: 'auto',
+        fontSize: typography.fontSizes.xs,
+        color: colors.textMuted,
+      }}>
+        {widgetCount} {widgetCount === 1 ? 'widget' : 'widgets'}
+      </div>
+    </button>
   );
 }
 
@@ -53,6 +262,9 @@ function SuggestionChip({ text, onClick }) {
         cursor: 'pointer',
         transition: 'all 0.15s ease',
         whiteSpace: 'nowrap',
+        maxWidth: 360,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
         boxShadow: shadows.sm,
       }}
       onMouseEnter={(e) => {
@@ -69,20 +281,39 @@ function SuggestionChip({ text, onClick }) {
   );
 }
 
-export default function HomeView({ modelId, onOpenThread, onOpenDashboard, recentQuestions = [] }) {
-  const { data, isLoading, isError, error } = useScenarioSummaries(modelId);
-  const scenarios = data?.scenarios || [];
+export default function HomeView({
+  modelId,
+  dashboards = [],
+  onOpenThread,
+  onOpenDashboard,
+  recentQuestions = [],
+}) {
+  const { data: scenarios = [], isLoading, isError, error } = useScenarios(modelId);
 
-  const handleAsk = (summary) => {
-    onOpenThread?.({
-      title: summary.name,
-      scenarioIds: [summary.id],
-      seedMessage: `Tell me what's driving the headline delta in ${summary.name}.`,
-    });
+  // Pick the default dashboard for a scenario: prefer a dashboard explicitly
+  // linked via a `default_dashboard_id` field if it exists; else the first one.
+  const pickDashboardId = (scenario) => {
+    if (scenario?.default_dashboard_id) return scenario.default_dashboard_id;
+    return dashboards[0]?.id || null;
   };
 
-  const handleOpen = (summary) => {
-    onOpenDashboard?.(summary);
+  const handleScenarioClick = (scenario) => {
+    const dashboardId = pickDashboardId(scenario);
+    if (!dashboardId) {
+      // No dashboards yet — can't preview. Open a thread instead so the user
+      // can ask about it.
+      onOpenThread?.({
+        title: scenario.name,
+        scenarioIds: [scenario.id],
+        seedMessage: `Tell me about the "${scenario.name}" scenario.`,
+      });
+      return;
+    }
+    onOpenDashboard?.(dashboardId, scenario.id);
+  };
+
+  const handleDashboardClick = (dashboard) => {
+    onOpenDashboard?.(dashboard.id, null);
   };
 
   const handleChipClick = (text) => {
@@ -102,20 +333,16 @@ export default function HomeView({ modelId, onOpenThread, onOpenDashboard, recen
     }}>
       <Greeting />
 
-      {/* Scenario cockpit grid */}
-      <section style={{ marginBottom: spacing.xl }}>
-        <div style={{
-          display: 'flex', alignItems: 'baseline',
-          justifyContent: 'space-between', marginBottom: spacing.md,
+      {/* Scenarios */}
+      <section style={{ marginBottom: spacing.xxl }}>
+        <h2 style={{
+          margin: `0 0 ${spacing.md}px`,
+          fontSize: typography.fontSizes.lg,
+          fontWeight: typography.fontWeights.semibold,
+          color: colors.textPrimary,
         }}>
-          <h2 style={{
-            margin: 0, fontSize: typography.fontSizes.lg,
-            fontWeight: typography.fontWeights.semibold,
-            color: colors.textPrimary,
-          }}>
-            Your scenarios
-          </h2>
-        </div>
+          Scenarios
+        </h2>
 
         {isLoading && (
           <div style={{ color: colors.textMuted, fontSize: typography.fontSizes.sm }}>
@@ -137,8 +364,7 @@ export default function HomeView({ modelId, onOpenThread, onOpenDashboard, recen
             color: colors.textMuted,
             fontSize: typography.fontSizes.sm,
           }}>
-            No scenarios yet. Create one from a dashboard, then come back here to
-            interrogate it.
+            No scenarios yet. Open a dashboard and create one, or ask Bob below.
           </div>
         )}
         {!isLoading && scenarios.length > 0 && (
@@ -148,12 +374,43 @@ export default function HomeView({ modelId, onOpenThread, onOpenDashboard, recen
             gap: spacing.md,
           }}>
             {scenarios.map((s) => (
-              <ScenarioCard
-                key={s.id}
-                summary={s}
-                onAsk={handleAsk}
-                onOpen={handleOpen}
-              />
+              <ScenarioCard key={s.id} scenario={s} onClick={handleScenarioClick} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* Dashboards */}
+      <section style={{ marginBottom: spacing.xxl }}>
+        <h2 style={{
+          margin: `0 0 ${spacing.md}px`,
+          fontSize: typography.fontSizes.lg,
+          fontWeight: typography.fontWeights.semibold,
+          color: colors.textPrimary,
+        }}>
+          Dashboards
+        </h2>
+
+        {dashboards.length === 0 ? (
+          <div style={{
+            background: colors.bgCard,
+            border: `1px dashed ${colors.border}`,
+            borderRadius: radius.lg,
+            padding: spacing.xl,
+            textAlign: 'center',
+            color: colors.textMuted,
+            fontSize: typography.fontSizes.sm,
+          }}>
+            No dashboards yet. Create one from the sidebar.
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+            gap: spacing.md,
+          }}>
+            {dashboards.map((d) => (
+              <DashboardCard key={d.id} dashboard={d} onClick={handleDashboardClick} />
             ))}
           </div>
         )}

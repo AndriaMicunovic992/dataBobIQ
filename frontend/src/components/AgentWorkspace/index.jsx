@@ -82,7 +82,7 @@ export default function AgentWorkspace({ modelId, dashboards, onExit, onOpenDash
               />
             </div>
             <PromptBar
-              placeholder="Ask a question about your scenarios..."
+              placeholder="Ask a question about your data"
               onSubmit={handleHomePrompt}
             />
           </>

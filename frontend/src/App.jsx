@@ -442,7 +442,7 @@ function NavItem({ icon, label, active, onClick }) {
 
 export default function App() {
   const [selectedModelId, setSelectedModelId] = useState(null);
-  const [activeTab, setActiveTab] = useState('schema');
+  const [activeTab, setActiveTab] = useState(AGENT_WORKSPACE_TAB);
   // One-shot handoff when DI navigates to a dashboard with a scenario
   // preselected. Consumed by the DashboardView as initialScenarioId on mount,
   // then cleared so subsequent tab switches don't re-apply it.

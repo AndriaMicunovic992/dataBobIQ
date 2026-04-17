@@ -84,13 +84,19 @@ const SHARED_AXIS_PROPS = {
   },
 };
 
-function ChartInner({ chartType, chartData, measures }) {
+// Build the single Recharts chart element that will be the direct child of
+// <ResponsiveContainer>. Recharts clones its direct child to inject width +
+// height, so wrapping in another component breaks sizing — the chart must be
+// returned as the immediate child.
+function renderChart(chartType, chartData, measures) {
   const margin = { top: 8, right: 16, left: 8, bottom: chartData.length > 8 ? 60 : 30 };
   const xAngle = chartData.length > 8 ? -35 : 0;
   const xAnchor = chartData.length > 8 ? 'end' : 'middle';
   const xHeight = chartData.length > 8 ? 60 : 30;
-
   const xProps = { ...SHARED_AXIS_PROPS.x, angle: xAngle, textAnchor: xAnchor, height: xHeight };
+  const legend = measures.length > 1
+    ? <Legend wrapperStyle={{ fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily, paddingTop: 8 }} />
+    : null;
 
   if (chartType === 'line') {
     return (
@@ -99,7 +105,7 @@ function ChartInner({ chartType, chartData, measures }) {
         <XAxis {...xProps} />
         <YAxis {...SHARED_AXIS_PROPS.y} />
         <Tooltip content={<ChartTooltip />} />
-        {measures.length > 1 && <Legend wrapperStyle={{ fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily, paddingTop: 8 }} />}
+        {legend}
         {measures.map((m, i) => (
           <Line key={m} type="monotone" dataKey={m} name={m} stroke={PALETTE[i % PALETTE.length]} strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
         ))}
@@ -114,7 +120,7 @@ function ChartInner({ chartType, chartData, measures }) {
         <XAxis {...xProps} />
         <YAxis {...SHARED_AXIS_PROPS.y} />
         <Tooltip content={<ChartTooltip />} />
-        {measures.length > 1 && <Legend wrapperStyle={{ fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily, paddingTop: 8 }} />}
+        {legend}
         {measures.map((m, i) => (
           <Area key={m} type="monotone" dataKey={m} name={m} stroke={PALETTE[i % PALETTE.length]} fill={PALETTE[i % PALETTE.length]} fillOpacity={0.15} strokeWidth={2} />
         ))}
@@ -122,7 +128,6 @@ function ChartInner({ chartType, chartData, measures }) {
     );
   }
 
-  // Default: bar
   const barSize = chartData.length > 20 ? 8 : chartData.length > 10 ? 14 : 22;
   return (
     <BarChart data={chartData} margin={margin} barSize={barSize}>
@@ -130,7 +135,7 @@ function ChartInner({ chartType, chartData, measures }) {
       <XAxis {...xProps} />
       <YAxis {...SHARED_AXIS_PROPS.y} />
       <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(37,99,235,0.06)' }} />
-      {measures.length > 1 && <Legend wrapperStyle={{ fontSize: typography.fontSizes.xs, fontFamily: typography.fontFamily, paddingTop: 8 }} />}
+      {legend}
       {measures.map((m, i) => (
         <Bar key={m} dataKey={m} name={m} fill={PALETTE[i % PALETTE.length]} radius={[3, 3, 0, 0]} />
       ))}
@@ -204,9 +209,9 @@ export default function DashboardChartWidget({ widget, scenarioId, yearFilter, m
   }
 
   return (
-    <div style={{ flex: 1, padding: spacing.sm, minHeight: 0 }}>
+    <div style={{ flex: 1, padding: spacing.sm, minWidth: 0, minHeight: 0 }}>
       <ResponsiveContainer width="100%" height="100%">
-        <ChartInner chartType={chartType} chartData={chartData} measures={measures} />
+        {renderChart(chartType, chartData, measures)}
       </ResponsiveContainer>
     </div>
   );

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { colors, spacing, radius, typography } from '../../theme.js';
 
 /**
@@ -126,7 +127,7 @@ function TableBlock({ lines }) {
   );
 }
 
-export default function MarkdownRenderer({ text }) {
+function MarkdownRendererImpl({ text }) {
   if (!text) return null;
 
   const lines = text.split('\n');
@@ -135,6 +136,7 @@ export default function MarkdownRenderer({ text }) {
   let key = 0;
 
   while (i < lines.length) {
+    const prevI = i;
     const line = lines[i];
 
     // Detect table blocks (consecutive pipe-containing lines starting with header + separator)
@@ -147,9 +149,17 @@ export default function MarkdownRenderer({ text }) {
       }
       if (isTableBlock(tableLines)) {
         blocks.push(<TableBlock key={key++} lines={tableLines} />);
-        i = j;
-        continue;
+      } else {
+        // Not a proper table yet (e.g. still streaming) — render as paragraph
+        // so lines with `|` don't trap the outer loop.
+        blocks.push(
+          <p key={key++} style={{ margin: `${spacing.xs}px 0` }}>
+            {parseInline(tableLines.join('\n'))}
+          </p>
+        );
       }
+      i = j;
+      continue;
     }
 
     // Headings: ## Heading
@@ -238,7 +248,14 @@ export default function MarkdownRenderer({ text }) {
         </p>
       );
     }
+
+    // Defensive safeguard: ensure we always make forward progress, so a
+    // future regression can't hang the browser mid-stream.
+    if (i === prevI) i++;
   }
 
   return <div>{blocks}</div>;
 }
+
+const MarkdownRenderer = memo(MarkdownRendererImpl);
+export default MarkdownRenderer;

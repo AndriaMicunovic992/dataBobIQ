@@ -1,22 +1,10 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { streamChat } from '../../api.js';
 import { colors, spacing, radius, typography, shadows } from '../../theme.js';
 import PromptBar from './PromptBar.jsx';
 import StructuredMessage, { parseStructured } from './StructuredMessage.jsx';
 
-/**
- * Narrow chat column inside a thread tab. Reuses the same SSE plumbing as
- * ChatPanel but keeps rendering local so this pane can live inside the
- * workspace layout (no floating window chrome).
- *
- * State shape for messages lives on the tab itself and is edited via the
- * `onUpdateTab` callback from the workspace shell.
- */
-
-// Tool names whose results are "artifact-worthy" — they carry structured
-// data the canvas can render as a card. Only the LAST artifact-worthy
-// result per assistant turn is auto-added to the canvas (the "final output").
 const ARTIFACT_TOOLS = new Set([
   'query_data',
   'compare_scenarios',
@@ -46,7 +34,7 @@ function makeArtifact(toolName, content) {
   };
 }
 
-function UserBubble({ message }) {
+const UserBubble = memo(function UserBubble({ message }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: spacing.sm }}>
       <div style={{
@@ -61,7 +49,7 @@ function UserBubble({ message }) {
       </div>
     </div>
   );
-}
+});
 
 function ExpandableToolResult({ part }) {
   const [expanded, setExpanded] = useState(false);
@@ -122,7 +110,7 @@ function PinToCanvasButton({ onClick }) {
   );
 }
 
-function AssistantBubble({ message, onPinToCanvas }) {
+const AssistantBubble = memo(function AssistantBubble({ message, onPinToCanvas }) {
   const parts = message.parts || [{ type: 'text', content: message.content || '' }];
   const textParts = parts.filter((p) => p.type === 'text' && p.content?.trim());
 
@@ -197,7 +185,7 @@ function AssistantBubble({ message, onPinToCanvas }) {
       </div>
     </div>
   );
-}
+});
 
 function ThinkingIndicator() {
   return (
@@ -212,6 +200,14 @@ function ThinkingIndicator() {
   );
 }
 
+/**
+ * Streaming architecture: during an active stream the assistant message lives
+ * in a local ref (streamingMsgRef) — NOT in tab.messages. A throttled render
+ * tick (~10 fps) drives UI updates. Only ConversationPane re-renders during
+ * streaming; Canvas, ThreadTabs, and the rest of the workspace stay frozen.
+ * On stream completion the final message is committed to tab.messages in a
+ * single onUpdateTab call.
+ */
 export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
@@ -220,79 +216,85 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   const pendingArtifactRef = useRef(null);
   const turnTextRef = useRef('');
   const hadToolRef = useRef(false);
-  const textFlushRef = useRef({ chunks: '', timer: null });
+
+  const streamingMsgRef = useRef(null);
+  const [renderTick, setRenderTick] = useState(0);
+  const tickTimerRef = useRef(null);
+
   const messages = tab.messages || [];
+
+  const scheduleRender = useCallback(() => {
+    if (tickTimerRef.current) return;
+    tickTimerRef.current = setTimeout(() => {
+      tickTimerRef.current = null;
+      setRenderTick((t) => t + 1);
+    }, 100);
+  }, []);
+
+  const displayMessages = (() => {
+    if (!streamingMsgRef.current) return messages;
+    const s = streamingMsgRef.current;
+    return [...messages, { ...s, parts: [...s.parts] }];
+  })();
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages]);
+  }, [messages.length, renderTick]);
 
   useEffect(() => {
     return () => {
-      if (textFlushRef.current.timer) clearTimeout(textFlushRef.current.timer);
+      if (tickTimerRef.current) clearTimeout(tickTimerRef.current);
     };
   }, []);
 
   const makeHandler = (assistantId) => {
-    const flush = () => {
-      const buf = textFlushRef.current;
-      if (buf.timer) { clearTimeout(buf.timer); buf.timer = null; }
-      if (!buf.chunks) return;
-      const text = buf.chunks;
-      buf.chunks = '';
-      onUpdateTab(tab.id, (t) => ({
-        messages: (t.messages || []).map((m) => {
-          if (m.id !== assistantId) return m;
-          const parts = [...(m.parts || [])];
-          const last = parts[parts.length - 1];
-          if (last && last.type === 'text') {
-            parts[parts.length - 1] = { ...last, content: last.content + text };
-          } else {
-            parts.push({ type: 'text', content: text });
-          }
-          return { ...m, parts };
-        }),
-      }));
-    };
-
     return (event) => {
       if (event.type === 'text' || event.type === 'delta') {
         const chunk = event.text || event.delta || '';
         turnTextRef.current += chunk;
-        textFlushRef.current.chunks += chunk;
-        if (!textFlushRef.current.timer) {
-          textFlushRef.current.timer = setTimeout(flush, 80);
+        const msg = streamingMsgRef.current;
+        if (!msg) return;
+        const last = msg.parts[msg.parts.length - 1];
+        if (last && last.type === 'text') {
+          last.content += chunk;
+        } else {
+          msg.parts.push({ type: 'text', content: chunk });
         }
+        scheduleRender();
+
       } else if (event.type === 'tool_use') {
-        flush();
         hadToolRef.current = true;
         turnTextRef.current = '';
-        onUpdateTab(tab.id, (t) => ({
-          messages: (t.messages || []).map((m) =>
-            m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
-          ),
-        }));
+        const msg = streamingMsgRef.current;
+        if (msg) msg.parts.push({ type: 'tool_use', name: event.name, input: event.input });
+        scheduleRender();
+
       } else if (event.type === 'tool_result') {
-        flush();
         let displayContent = event.content;
         if (typeof displayContent === 'string' && displayContent.length > 500) {
           displayContent = displayContent.slice(0, 500) + '\n… (truncated for display)';
         }
-        onUpdateTab(tab.id, (t) => ({
-          messages: (t.messages || []).map((m) =>
-            m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: displayContent }] }
-          ),
-        }));
+        const msg = streamingMsgRef.current;
+        if (msg) msg.parts.push({ type: 'tool_result', name: event.name, content: displayContent });
         if (ARTIFACT_TOOLS.has(event.name) && event.content) {
           pendingArtifactRef.current = makeArtifact(event.name, event.content);
         }
+        scheduleRender();
+
       } else if (event.type === 'scenario_created') {
-        flush();
         qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
         qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
+
       } else if (event.type === 'done' || event.type === 'error') {
-        flush();
+        if (tickTimerRef.current) {
+          clearTimeout(tickTimerRef.current);
+          tickTimerRef.current = null;
+        }
+
         setStreaming(false);
+        const finalMsg = streamingMsgRef.current;
+        streamingMsgRef.current = null;
+
         const toolArtifact = pendingArtifactRef.current;
         pendingArtifactRef.current = null;
         const finalText = turnTextRef.current.trim();
@@ -305,7 +307,9 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
           const parsed = parseStructured(finalText);
           let title = 'Analysis';
           if (parsed.output) {
-            const firstLine = parsed.output.split('\n').find((l) => l.trim() && !l.trim().startsWith('|') && !l.trim().startsWith('-'));
+            const firstLine = parsed.output.split('\n').find(
+              (l) => l.trim() && !l.trim().startsWith('|') && !l.trim().startsWith('-')
+            );
             if (firstLine) title = firstLine.replace(/[#*_]/g, '').trim().slice(0, 50);
           } else if (parsed.plain) {
             title = parsed.plain.slice(0, 50).replace(/[#*_\n]/g, '').trim();
@@ -321,25 +325,20 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
           artifact = toolArtifact;
         }
 
-        if (event.type === 'error') {
-          onUpdateTab(tab.id, (t) => ({
-            messages: (t.messages || []).map((m) => {
-              if (m.id !== assistantId) return m;
-              const parts = [...(m.parts || []), { type: 'text', content: `\n\nError: ${event.data}` }];
-              return { ...m, parts, streaming: false };
-            }),
-          }));
-        } else {
+        if (finalMsg) {
+          const committedParts = event.type === 'error'
+            ? [...finalMsg.parts, { type: 'text', content: `\n\nError: ${event.data}` }]
+            : [...finalMsg.parts];
+          const committedMsg = { ...finalMsg, parts: committedParts, streaming: false };
+
           onUpdateTab(tab.id, (t) => {
-            const updated = {
-              messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
-            };
-            if (artifact) {
-              updated.artifacts = [...(t.artifacts || []), artifact];
-            }
+            const updated = { messages: [...(t.messages || []), committedMsg] };
+            if (artifact) updated.artifacts = [...(t.artifacts || []), artifact];
             return updated;
           });
         }
+
+        setRenderTick((t) => t + 1);
       }
     };
   };
@@ -350,12 +349,12 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     turnTextRef.current = '';
     hadToolRef.current = false;
     pendingArtifactRef.current = null;
-    if (textFlushRef.current.timer) clearTimeout(textFlushRef.current.timer);
-    textFlushRef.current = { chunks: '', timer: null };
+    streamingMsgRef.current = null;
+    if (tickTimerRef.current) { clearTimeout(tickTimerRef.current); tickTimerRef.current = null; }
 
     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text };
     const assistantId = `a-${Date.now()}`;
-    const assistantMsg = { id: assistantId, role: 'assistant', parts: [], streaming: true };
+    streamingMsgRef.current = { id: assistantId, role: 'assistant', parts: [], streaming: true };
 
     const history = messages.map((m) => ({
       role: m.role,
@@ -366,7 +365,7 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     }));
 
     onUpdateTab(tab.id, (t) => ({
-      messages: [...(t.messages || []), userMsg, assistantMsg],
+      messages: [...(t.messages || []), userMsg],
       pendingSeed: null,
     }));
     setStreaming(true);
@@ -380,7 +379,6 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [streaming, modelId, messages, onUpdateTab, tab.id, qc]);
 
-  // Auto-fire a pending seed message on mount.
   const seedFiredRef = useRef(false);
   useEffect(() => {
     if (seedFiredRef.current) return;
@@ -389,27 +387,23 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     turnTextRef.current = '';
     hadToolRef.current = false;
     pendingArtifactRef.current = null;
-    if (textFlushRef.current.timer) clearTimeout(textFlushRef.current.timer);
-    textFlushRef.current = { chunks: '', timer: null };
+    streamingMsgRef.current = null;
+    if (tickTimerRef.current) { clearTimeout(tickTimerRef.current); tickTimerRef.current = null; }
 
     const seedText = tab.pendingSeed;
     const assistantId = `a-${Date.now()}`;
-    const assistantMsg = { id: assistantId, role: 'assistant', parts: [], streaming: true };
-    onUpdateTab(tab.id, (t) => ({
-      messages: [...(t.messages || []), assistantMsg],
-      pendingSeed: null,
-    }));
+    streamingMsgRef.current = { id: assistantId, role: 'assistant', parts: [], streaming: true };
+
+    onUpdateTab(tab.id, (t) => ({ pendingSeed: null }));
     setStreaming(true);
 
-    const history = (tab.messages || [])
-      .filter((m) => m.id !== assistantId)
-      .map((m) => ({
-        role: m.role,
-        content: m.content || (m.parts || [])
-          .filter((p) => p.type === 'text')
-          .map((p) => p.content || '')
-          .join('\n') || '',
-      }));
+    const history = (tab.messages || []).map((m) => ({
+      role: m.role,
+      content: m.content || (m.parts || [])
+        .filter((p) => p.type === 'text')
+        .map((p) => p.content || '')
+        .join('\n') || '',
+    }));
     const trimmedHistory = history.slice(0, -1);
 
     const stop = streamChat(
@@ -427,8 +421,8 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     }));
   }, [onUpdateTab, tab.id]);
 
-  const lastMsg = messages[messages.length - 1];
-  const isThinking = streaming && lastMsg?.role === 'assistant' && (lastMsg?.parts?.length || 0) === 0;
+  const lastDisplayMsg = displayMessages[displayMessages.length - 1];
+  const isThinking = streaming && lastDisplayMsg?.role === 'assistant' && (lastDisplayMsg?.parts?.length || 0) === 0;
 
   return (
     <div style={{
@@ -437,12 +431,11 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
       borderRight: `1px solid ${colors.border}`,
       background: colors.bgMuted,
     }}>
-      {/* Messages */}
       <div ref={scrollRef} style={{
         flex: 1, overflowY: 'auto',
         padding: `${spacing.md}px ${spacing.md}px`,
       }}>
-        {messages.length === 0 && (
+        {displayMessages.length === 0 && (
           <div style={{
             color: colors.textMuted,
             fontSize: typography.fontSizes.sm,
@@ -452,7 +445,7 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
             Ask anything about this scenario.
           </div>
         )}
-        {messages.map((msg) => (
+        {displayMessages.map((msg) => (
           msg.role === 'user'
             ? <UserBubble key={msg.id} message={msg} />
             : <AssistantBubble key={msg.id} message={msg} onPinToCanvas={pinToCanvas} />
@@ -460,9 +453,6 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
         {isThinking && <ThinkingIndicator />}
       </div>
 
-      {/* Inline prompt at the bottom of the pane (full-width prompt bar
-          lives at the workspace level on Home; inside a thread the input
-          is scoped to the conversation). */}
       <PromptBar
         placeholder="Reply to Bob..."
         onSubmit={sendMessage}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 import { colors, spacing, radius, typography } from '../../theme.js';
 import MarkdownRenderer from './MarkdownRenderer.jsx';
 
@@ -90,7 +90,7 @@ function Section({ tag, content, defaultExpanded, label }) {
  * @param {string} text - the full assistant text
  * @param {'chat'|'canvas'} variant - changes default expansion (canvas hides reasoning by default)
  */
-export default function StructuredMessage({ text, variant = 'chat' }) {
+function StructuredMessageImpl({ text, variant = 'chat' }) {
   const parsed = parseStructured(text);
 
   if (parsed.plain !== undefined) {
@@ -122,3 +122,6 @@ export default function StructuredMessage({ text, variant = 'chat' }) {
     </div>
   );
 }
+
+const StructuredMessage = memo(StructuredMessageImpl);
+export default StructuredMessage;

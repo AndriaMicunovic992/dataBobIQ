@@ -83,6 +83,8 @@ export const evaluateKPIs = (modelId, data) =>
 export const listKnowledge = (modelId) => req(`/models/${modelId}/knowledge`);
 export const createKnowledge = (modelId, data) =>
   req(`/models/${modelId}/knowledge`, json(data));
+export const updateKnowledge = (id, data) =>
+  req(`/knowledge/${id}`, { ...json(data), method: 'PUT' });
 export const deleteKnowledge = (id) => req(`/knowledge/${id}`, { method: 'DELETE' });
 
 // Dashboards

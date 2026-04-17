@@ -71,17 +71,15 @@ function formatRule(rule) {
   return `${field} (${rule.rule_type})`;
 }
 
-function ScenarioCard({ scenario, onClick }) {
+function ScenarioCard({ scenario, dashboards, onOpen }) {
   const rules = scenario.rules || [];
   const color = scenario.color || colors.primary;
   const shown = rules.slice(0, 3);
   const extra = rules.length - shown.length;
 
   return (
-    <button
-      onClick={() => onClick(scenario)}
+    <div
       style={{
-        textAlign: 'left',
         background: colors.bgCard,
         borderRadius: radius.lg,
         border: `1px solid ${colors.border}`,
@@ -91,7 +89,6 @@ function ScenarioCard({ scenario, onClick }) {
         flexDirection: 'column',
         gap: spacing.sm,
         transition: transitions.fast,
-        cursor: 'pointer',
         minHeight: 180,
         fontFamily: typography.fontFamily,
       }}
@@ -134,7 +131,7 @@ function ScenarioCard({ scenario, onClick }) {
           fontStyle: 'italic',
           flex: 1,
         }}>
-          No rules yet — click to add some on a dashboard.
+          No rules yet — open a dashboard below to add some.
         </div>
       ) : (
         <ul style={{
@@ -170,15 +167,56 @@ function ScenarioCard({ scenario, onClick }) {
         </ul>
       )}
 
-      <div style={{
-        marginTop: 'auto',
-        fontSize: typography.fontSizes.xs,
-        color: color,
-        fontWeight: typography.fontWeights.medium,
-      }}>
-        Edit rules →
-      </div>
-    </button>
+      {/* Dashboard picker — click a dashboard to open it with this scenario
+          preselected. First option is the default on whole-card click. */}
+      {dashboards.length > 0 ? (
+        <div style={{
+          marginTop: 'auto',
+          paddingTop: spacing.xs,
+          borderTop: `1px solid ${colors.border}`,
+          display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 4,
+        }}>
+          <span style={{
+            fontSize: typography.fontSizes.xs,
+            color: colors.textMuted,
+            marginRight: spacing.xs,
+          }}>
+            Edit on:
+          </span>
+          {dashboards.map((d, i) => (
+            <button
+              key={d.id}
+              onClick={(e) => { e.stopPropagation(); onOpen(scenario, d.id); }}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                padding: '2px 6px',
+                borderRadius: radius.sm,
+                fontSize: typography.fontSizes.xs,
+                fontWeight: typography.fontWeights.medium,
+                color: color,
+                cursor: 'pointer',
+                fontFamily: typography.fontFamily,
+                whiteSpace: 'nowrap',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = color + '18'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              {d.name}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div style={{
+          marginTop: 'auto',
+          fontSize: typography.fontSizes.xs,
+          color: colors.textMuted,
+          fontStyle: 'italic',
+        }}>
+          No dashboards yet — create one to edit rules here.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -290,25 +328,8 @@ export default function HomeView({
 }) {
   const { data: scenarios = [], isLoading, isError, error } = useScenarios(modelId);
 
-  // Pick the default dashboard for a scenario: prefer a dashboard explicitly
-  // linked via a `default_dashboard_id` field if it exists; else the first one.
-  const pickDashboardId = (scenario) => {
-    if (scenario?.default_dashboard_id) return scenario.default_dashboard_id;
-    return dashboards[0]?.id || null;
-  };
-
-  const handleScenarioClick = (scenario) => {
-    const dashboardId = pickDashboardId(scenario);
-    if (!dashboardId) {
-      // No dashboards yet — can't preview. Open a thread instead so the user
-      // can ask about it.
-      onOpenThread?.({
-        title: scenario.name,
-        scenarioIds: [scenario.id],
-        seedMessage: `Tell me about the "${scenario.name}" scenario.`,
-      });
-      return;
-    }
+  const handleScenarioOpen = (scenario, dashboardId) => {
+    if (!dashboardId) return;
     onOpenDashboard?.(dashboardId, scenario.id);
   };
 
@@ -374,7 +395,12 @@ export default function HomeView({
             gap: spacing.md,
           }}>
             {scenarios.map((s) => (
-              <ScenarioCard key={s.id} scenario={s} onClick={handleScenarioClick} />
+              <ScenarioCard
+                key={s.id}
+                scenario={s}
+                dashboards={dashboards}
+                onOpen={handleScenarioOpen}
+              />
             ))}
           </div>
         )}

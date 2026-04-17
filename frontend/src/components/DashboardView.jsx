@@ -539,27 +539,28 @@ const RULE_TYPE_STYLES = {
  *  the card shrinks to just a colored title pill. When the sidebar is
  *  expanded, the card renders the full reference-image layout (pill
  *  header + bold title + IMPACT/NOTE grid + Edit/Delete actions). */
-function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true }) {
+function RuleCard({ rule, onDelete, onEdit, sidebarExpanded = true, scenarioColor }) {
   const style = RULE_TYPE_STYLES[rule.rule_type] || RULE_TYPE_STYLES.multiplier;
   const filterEntries = Object.entries(rule.filter_expr || {});
   const hasFilters = filterEntries.length > 0;
 
-  // Collapsed — tiny title pill, nothing else.
+  // Collapsed — bullet list item, matching the DI home card format so the
+  // rules read the same way in both places.
   if (!sidebarExpanded) {
+    const bulletColor = scenarioColor || colors.primary;
     return (
       <div style={{
-        padding: `${spacing.xs}px 0`,
-        display: 'flex', alignItems: 'center',
+        padding: `3px 0`,
+        display: 'flex', alignItems: 'baseline', gap: spacing.xs,
+        fontSize: typography.fontSizes.sm,
+        color: colors.textSecondary,
+        fontFamily: typography.fontFamily,
+        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
       }}>
+        <span style={{ color: bulletColor, fontSize: 10, flexShrink: 0 }}>●</span>
         <span style={{
-          display: 'inline-flex', alignItems: 'center',
-          padding: '5px 12px', borderRadius: radius.full,
-          background: style.bg, color: style.text,
-          border: `1px solid ${style.border}`,
-          fontFamily: typography.fontFamily, fontSize: typography.fontSizes.xs,
-          fontWeight: typography.fontWeights.semibold,
-          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-          maxWidth: '100%',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          minWidth: 0, flex: 1,
         }}>
           {rule.name || style.label}
         </span>
@@ -800,6 +801,7 @@ function ScenarioSidebar({ modelId, scenarioId, metadata, expanded = true, onFor
                 onDelete={handleDeleteRule}
                 onEdit={handleEditRule}
                 sidebarExpanded={expanded}
+                scenarioColor={scenario?.color}
               />
             ))
         )}

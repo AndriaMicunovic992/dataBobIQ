@@ -584,7 +584,7 @@ export default function App() {
           : undefined;
       return (
         <DashboardView
-          key={`${dashboardId}:${initialScenarioId || ''}`}
+          key={dashboardId}
           dashboardId={dashboardId}
           modelId={selectedModelId}
           initialScenarioId={initialScenarioId}

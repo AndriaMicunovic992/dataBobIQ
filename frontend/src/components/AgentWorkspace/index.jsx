@@ -7,7 +7,7 @@ import ConversationPane from './ConversationPane.jsx';
 import Canvas from './Canvas.jsx';
 import PromptBar from './PromptBar.jsx';
 
-export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
+export default function AgentWorkspace({ modelId, dashboards, onExit, onOpenDashboard }) {
   const {
     tabs, activeId, setActiveId,
     openThread, closeTab, updateTab, renameTab,
@@ -75,6 +75,7 @@ export default function AgentWorkspace({ modelId, onExit, onOpenDashboard }) {
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
               <HomeView
                 modelId={modelId}
+                dashboards={dashboards}
                 onOpenThread={handleOpenThread}
                 onOpenDashboard={onOpenDashboard}
                 recentQuestions={recentQuestions}

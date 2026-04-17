@@ -1,5 +1,7 @@
-import { useScenarios } from '../../hooks/useScenarios.js';
-import { colors, spacing, radius, typography, shadows, transitions } from '../../theme.js';
+import { useState } from 'react';
+import { useScenarios, useCreateScenario } from '../../hooks/useScenarios.js';
+import { colors, spacing, radius, typography, shadows, transitions, inputStyle, labelStyle } from '../../theme.js';
+import { Button } from '../common/Button.jsx';
 
 /**
  * Decision Intelligence landing page for a model.
@@ -319,6 +321,114 @@ function SuggestionChip({ text, onClick }) {
   );
 }
 
+function NewScenarioModal({ modelId, dashboards, onClose, onCreated }) {
+  const [name, setName] = useState('');
+  const [dashboardId, setDashboardId] = useState(dashboards[0]?.id || '');
+  const createMut = useCreateScenario(modelId);
+
+  const canSubmit = !!name.trim() && !!dashboardId && !createMut.isPending;
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    createMut.mutate(
+      { name: name.trim(), base_config: { source: 'actuals' } },
+      {
+        onSuccess: (data) => {
+          onCreated(data.id, dashboardId);
+          onClose();
+        },
+      }
+    );
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+      }}
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div style={{
+        background: colors.bgCard, borderRadius: radius.lg, boxShadow: shadows.xl,
+        padding: spacing.xl, width: 460, maxWidth: '90vw',
+        fontFamily: typography.fontFamily,
+      }}>
+        <h2 style={{
+          margin: `0 0 ${spacing.sm}px`,
+          fontSize: typography.fontSizes.xl,
+          fontWeight: typography.fontWeights.bold,
+          color: colors.textPrimary,
+        }}>
+          New Scenario
+        </h2>
+        <p style={{
+          margin: `0 0 ${spacing.lg}px`,
+          fontSize: typography.fontSizes.sm,
+          color: colors.textMuted,
+        }}>
+          Name your scenario and pick the dashboard where you'll shape its rules.
+        </p>
+
+        <div style={{ marginBottom: spacing.md }}>
+          <label style={labelStyle}>Scenario Name *</label>
+          <input
+            style={inputStyle}
+            placeholder="e.g. Revenue +10%"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleSubmit(); }}
+            autoFocus
+          />
+        </div>
+
+        <div style={{ marginBottom: spacing.lg }}>
+          <label style={labelStyle}>Edit rules on dashboard *</label>
+          {dashboards.length === 0 ? (
+            <p style={{
+              margin: 0, fontSize: typography.fontSizes.sm,
+              color: colors.danger, fontStyle: 'italic',
+            }}>
+              No dashboards yet — create one from the sidebar first.
+            </p>
+          ) : (
+            <select
+              style={inputStyle}
+              value={dashboardId}
+              onChange={(e) => setDashboardId(e.target.value)}
+            >
+              {dashboards.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {createMut.isError && (
+          <p style={{
+            color: colors.danger, fontSize: typography.fontSizes.sm,
+            margin: `0 0 ${spacing.sm}px`,
+          }}>
+            {createMut.error?.message || 'Failed to create scenario'}
+          </p>
+        )}
+
+        <div style={{ display: 'flex', gap: spacing.sm, justifyContent: 'flex-end' }}>
+          <Button variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            loading={createMut.isPending}
+            disabled={!canSubmit}
+            onClick={handleSubmit}
+          >
+            Create & Open
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function HomeView({
   modelId,
   dashboards = [],
@@ -327,6 +437,7 @@ export default function HomeView({
   recentQuestions = [],
 }) {
   const { data: scenarios = [], isLoading, isError, error } = useScenarios(modelId);
+  const [showNewScenario, setShowNewScenario] = useState(false);
 
   const handleScenarioOpen = (scenario, dashboardId) => {
     if (!dashboardId) return;
@@ -356,14 +467,44 @@ export default function HomeView({
 
       {/* Scenarios */}
       <section style={{ marginBottom: spacing.xxl }}>
-        <h2 style={{
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: spacing.sm,
           margin: `0 0 ${spacing.md}px`,
-          fontSize: typography.fontSizes.lg,
-          fontWeight: typography.fontWeights.semibold,
-          color: colors.textPrimary,
         }}>
-          Scenarios
-        </h2>
+          <h2 style={{
+            margin: 0,
+            fontSize: typography.fontSizes.lg,
+            fontWeight: typography.fontWeights.semibold,
+            color: colors.textPrimary,
+          }}>
+            Scenarios
+          </h2>
+          <button
+            onClick={() => setShowNewScenario(true)}
+            title="New scenario"
+            style={{
+              width: 28, height: 28, borderRadius: radius.full,
+              border: `1px solid ${colors.border}`,
+              background: colors.bgCard,
+              color: colors.textSecondary,
+              fontSize: 16, lineHeight: 1,
+              cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              transition: transitions.fast,
+              fontFamily: typography.fontFamily,
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.borderColor = colors.primary;
+              e.currentTarget.style.color = colors.primary;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.borderColor = colors.border;
+              e.currentTarget.style.color = colors.textSecondary;
+            }}
+          >
+            +
+          </button>
+        </div>
 
         {isLoading && (
           <div style={{ color: colors.textMuted, fontSize: typography.fontSizes.sm }}>
@@ -441,6 +582,15 @@ export default function HomeView({
           </div>
         )}
       </section>
+
+      {showNewScenario && (
+        <NewScenarioModal
+          modelId={modelId}
+          dashboards={dashboards}
+          onClose={() => setShowNewScenario(false)}
+          onCreated={(scenarioId, dashboardId) => onOpenDashboard?.(dashboardId, scenarioId)}
+        />
+      )}
 
       {/* Recent questions */}
       {recentQuestions.length > 0 && (

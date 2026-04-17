@@ -1,16 +1,36 @@
+import { useState, useRef, useEffect } from 'react';
 import { colors, spacing, radius, typography, transitions } from '../../theme.js';
 
-/**
- * Top tab bar for the Agent Workspace. Home tab is always first and can't be
- * closed; thread tabs are appended as the user opens new conversations. The
- * active tab is highlighted with a bottom border in the primary color.
- */
-
-function Tab({ tab, active, onClick, onClose }) {
+function Tab({ tab, active, onClick, onClose, onRename }) {
   const isHome = tab.kind === 'home';
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(tab.title);
+  const inputRef = useRef(null);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commitRename = () => {
+    const trimmed = draft.trim();
+    if (trimmed && trimmed !== tab.title) {
+      onRename?.(trimmed);
+    }
+    setEditing(false);
+  };
+
   return (
     <div
       onClick={onClick}
+      onDoubleClick={() => {
+        if (!isHome) {
+          setDraft(tab.title);
+          setEditing(true);
+        }
+      }}
       style={{
         display: 'flex', alignItems: 'center', gap: spacing.xs,
         padding: `${spacing.sm}px ${spacing.md}px`,
@@ -32,13 +52,40 @@ function Tab({ tab, active, onClick, onClose }) {
       }}
     >
       {isHome && <span style={{ fontSize: 12 }}>⌂</span>}
-      <span style={{
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        flex: 1, minWidth: 0,
-      }}>
-        {tab.title}
-      </span>
-      {!isHome && (
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commitRename();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: 'transparent',
+            border: `1px solid ${colors.borderFocus}`,
+            borderRadius: radius.sm,
+            color: 'inherit',
+            fontSize: 'inherit',
+            fontWeight: 'inherit',
+            fontFamily: 'inherit',
+            padding: '0 4px',
+            outline: 'none',
+            width: '100%',
+            minWidth: 60,
+          }}
+        />
+      ) : (
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          flex: 1, minWidth: 0,
+        }}>
+          {tab.title}
+        </span>
+      )}
+      {!isHome && !editing && (
         <button
           onClick={(e) => { e.stopPropagation(); onClose(); }}
           aria-label="Close tab"
@@ -60,7 +107,7 @@ function Tab({ tab, active, onClick, onClose }) {
   );
 }
 
-export default function ThreadTabs({ tabs, activeId, onSelect, onClose, onExit }) {
+export default function ThreadTabs({ tabs, activeId, onSelect, onClose, onRename, onExit }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'stretch',
@@ -78,6 +125,7 @@ export default function ThreadTabs({ tabs, activeId, onSelect, onClose, onExit }
             active={tab.id === activeId}
             onClick={() => onSelect(tab.id)}
             onClose={() => onClose(tab.id)}
+            onRename={(title) => onRename?.(tab.id, title)}
           />
         ))}
       </div>

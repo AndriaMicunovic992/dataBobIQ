@@ -1477,7 +1477,7 @@ async def stream_chat(
 
             async with client.messages.stream(
                 model="claude-sonnet-4-5",
-                max_tokens=4096,
+                max_tokens=8192,
                 system=system_prompt,
                 tools=tools,
                 messages=messages,
@@ -1522,6 +1522,16 @@ async def stream_chat(
                             "name": block.name,
                             "input": block.input or {},
                         })
+
+            if stop_reason == "max_tokens":
+                # Model hit the token limit mid-response. Append what we have
+                # and loop so it can continue where it left off.
+                messages.append({"role": "assistant", "content": full_text})
+                messages.append({
+                    "role": "user",
+                    "content": "Continue from where you stopped.",
+                })
+                continue
 
             if stop_reason != "tool_use" or not tool_uses:
                 break

@@ -220,100 +220,128 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
   const pendingArtifactRef = useRef(null);
   const turnTextRef = useRef('');
   const hadToolRef = useRef(false);
+  const textFlushRef = useRef({ chunks: '', timer: null });
   const messages = tab.messages || [];
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages]);
 
-  // Shared SSE event handler — used by both sendMessage and the seed effect.
-  const makeHandler = (assistantId) => (event) => {
-    if (event.type === 'text' || event.type === 'delta') {
-      const chunk = event.text || event.delta || '';
-      turnTextRef.current += chunk;
+  useEffect(() => {
+    return () => {
+      if (textFlushRef.current.timer) clearTimeout(textFlushRef.current.timer);
+    };
+  }, []);
+
+  const makeHandler = (assistantId) => {
+    const flush = () => {
+      const buf = textFlushRef.current;
+      if (buf.timer) { clearTimeout(buf.timer); buf.timer = null; }
+      if (!buf.chunks) return;
+      const text = buf.chunks;
+      buf.chunks = '';
       onUpdateTab(tab.id, (t) => ({
         messages: (t.messages || []).map((m) => {
           if (m.id !== assistantId) return m;
           const parts = [...(m.parts || [])];
           const last = parts[parts.length - 1];
           if (last && last.type === 'text') {
-            parts[parts.length - 1] = { ...last, content: last.content + chunk };
+            parts[parts.length - 1] = { ...last, content: last.content + text };
           } else {
-            parts.push({ type: 'text', content: chunk });
+            parts.push({ type: 'text', content: text });
           }
           return { ...m, parts };
         }),
       }));
-    } else if (event.type === 'tool_use') {
-      hadToolRef.current = true;
-      turnTextRef.current = '';
-      onUpdateTab(tab.id, (t) => ({
-        messages: (t.messages || []).map((m) =>
-          m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
-        ),
-      }));
-    } else if (event.type === 'tool_result') {
-      onUpdateTab(tab.id, (t) => ({
-        messages: (t.messages || []).map((m) =>
-          m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: event.content }] }
-        ),
-      }));
-      if (ARTIFACT_TOOLS.has(event.name) && event.content) {
-        pendingArtifactRef.current = makeArtifact(event.name, event.content);
-      }
-    } else if (event.type === 'scenario_created') {
-      qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
-      qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
-    } else if (event.type === 'done' || event.type === 'error') {
-      setStreaming(false);
-      const toolArtifact = pendingArtifactRef.current;
-      pendingArtifactRef.current = null;
-      const finalText = turnTextRef.current.trim();
-      const hadTool = hadToolRef.current;
-      turnTextRef.current = '';
-      hadToolRef.current = false;
+    };
 
-      let artifact = null;
-      if (hadTool && finalText.length > 80) {
-        const parsed = parseStructured(finalText);
-        let title = 'Analysis';
-        if (parsed.output) {
-          const firstLine = parsed.output.split('\n').find((l) => l.trim() && !l.trim().startsWith('|') && !l.trim().startsWith('-'));
-          if (firstLine) title = firstLine.replace(/[#*_]/g, '').trim().slice(0, 50);
-        } else if (parsed.plain) {
-          title = parsed.plain.slice(0, 50).replace(/[#*_\n]/g, '').trim();
+    return (event) => {
+      if (event.type === 'text' || event.type === 'delta') {
+        const chunk = event.text || event.delta || '';
+        turnTextRef.current += chunk;
+        textFlushRef.current.chunks += chunk;
+        if (!textFlushRef.current.timer) {
+          textFlushRef.current.timer = setTimeout(flush, 80);
         }
-        artifact = {
-          id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          title: title || 'Analysis',
-          subtitle: 'Analysis',
-          type: 'markdown',
-          content: finalText,
-        };
-      } else if (toolArtifact) {
-        artifact = toolArtifact;
-      }
-
-      if (event.type === 'error') {
+      } else if (event.type === 'tool_use') {
+        flush();
+        hadToolRef.current = true;
+        turnTextRef.current = '';
         onUpdateTab(tab.id, (t) => ({
-          messages: (t.messages || []).map((m) => {
-            if (m.id !== assistantId) return m;
-            const parts = [...(m.parts || []), { type: 'text', content: `\n\nError: ${event.data}` }];
-            return { ...m, parts, streaming: false };
-          }),
+          messages: (t.messages || []).map((m) =>
+            m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_use', name: event.name, input: event.input }] }
+          ),
         }));
-      } else {
-        onUpdateTab(tab.id, (t) => {
-          const updated = {
-            messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
-          };
-          if (artifact) {
-            updated.artifacts = [...(t.artifacts || []), artifact];
+      } else if (event.type === 'tool_result') {
+        flush();
+        let displayContent = event.content;
+        if (typeof displayContent === 'string' && displayContent.length > 500) {
+          displayContent = displayContent.slice(0, 500) + '\n… (truncated for display)';
+        }
+        onUpdateTab(tab.id, (t) => ({
+          messages: (t.messages || []).map((m) =>
+            m.id !== assistantId ? m : { ...m, parts: [...(m.parts || []), { type: 'tool_result', name: event.name, content: displayContent }] }
+          ),
+        }));
+        if (ARTIFACT_TOOLS.has(event.name) && event.content) {
+          pendingArtifactRef.current = makeArtifact(event.name, event.content);
+        }
+      } else if (event.type === 'scenario_created') {
+        flush();
+        qc.invalidateQueries({ queryKey: ['scenarios', modelId] });
+        qc.invalidateQueries({ queryKey: ['scenario-summaries', modelId] });
+      } else if (event.type === 'done' || event.type === 'error') {
+        flush();
+        setStreaming(false);
+        const toolArtifact = pendingArtifactRef.current;
+        pendingArtifactRef.current = null;
+        const finalText = turnTextRef.current.trim();
+        const hadTool = hadToolRef.current;
+        turnTextRef.current = '';
+        hadToolRef.current = false;
+
+        let artifact = null;
+        if (hadTool && finalText.length > 80) {
+          const parsed = parseStructured(finalText);
+          let title = 'Analysis';
+          if (parsed.output) {
+            const firstLine = parsed.output.split('\n').find((l) => l.trim() && !l.trim().startsWith('|') && !l.trim().startsWith('-'));
+            if (firstLine) title = firstLine.replace(/[#*_]/g, '').trim().slice(0, 50);
+          } else if (parsed.plain) {
+            title = parsed.plain.slice(0, 50).replace(/[#*_\n]/g, '').trim();
           }
-          return updated;
-        });
+          artifact = {
+            id: `art-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            title: title || 'Analysis',
+            subtitle: 'Analysis',
+            type: 'markdown',
+            content: finalText,
+          };
+        } else if (toolArtifact) {
+          artifact = toolArtifact;
+        }
+
+        if (event.type === 'error') {
+          onUpdateTab(tab.id, (t) => ({
+            messages: (t.messages || []).map((m) => {
+              if (m.id !== assistantId) return m;
+              const parts = [...(m.parts || []), { type: 'text', content: `\n\nError: ${event.data}` }];
+              return { ...m, parts, streaming: false };
+            }),
+          }));
+        } else {
+          onUpdateTab(tab.id, (t) => {
+            const updated = {
+              messages: (t.messages || []).map((m) => m.id === assistantId ? { ...m, streaming: false } : m),
+            };
+            if (artifact) {
+              updated.artifacts = [...(t.artifacts || []), artifact];
+            }
+            return updated;
+          });
+        }
       }
-    }
+    };
   };
 
   const sendMessage = useCallback((text) => {
@@ -322,6 +350,8 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     turnTextRef.current = '';
     hadToolRef.current = false;
     pendingArtifactRef.current = null;
+    if (textFlushRef.current.timer) clearTimeout(textFlushRef.current.timer);
+    textFlushRef.current = { chunks: '', timer: null };
 
     const userMsg = { id: `u-${Date.now()}`, role: 'user', content: text };
     const assistantId = `a-${Date.now()}`;
@@ -329,7 +359,10 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
 
     const history = messages.map((m) => ({
       role: m.role,
-      content: m.content || m.parts?.map((p) => p.content || '').join('') || '',
+      content: m.content || (m.parts || [])
+        .filter((p) => p.type === 'text')
+        .map((p) => p.content || '')
+        .join('\n') || '',
     }));
 
     onUpdateTab(tab.id, (t) => ({
@@ -356,6 +389,8 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
     turnTextRef.current = '';
     hadToolRef.current = false;
     pendingArtifactRef.current = null;
+    if (textFlushRef.current.timer) clearTimeout(textFlushRef.current.timer);
+    textFlushRef.current = { chunks: '', timer: null };
 
     const seedText = tab.pendingSeed;
     const assistantId = `a-${Date.now()}`;
@@ -370,7 +405,10 @@ export default function ConversationPane({ tab, modelId, onUpdateTab }) {
       .filter((m) => m.id !== assistantId)
       .map((m) => ({
         role: m.role,
-        content: m.content || m.parts?.map((p) => p.content || '').join('') || '',
+        content: m.content || (m.parts || [])
+          .filter((p) => p.type === 'text')
+          .map((p) => p.content || '')
+          .join('\n') || '',
       }));
     const trimmedHistory = history.slice(0, -1);
 

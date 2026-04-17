@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { listKnowledge, createKnowledge, deleteKnowledge } from '../api.js';
+import { listKnowledge, createKnowledge, updateKnowledge, deleteKnowledge } from '../api.js';
 import { colors, spacing, radius, typography, shadows, cardStyle, inputStyle, labelStyle, transitions } from '../theme.js';
 import { Button } from './common/Button.jsx';
 import { Badge } from './common/Badge.jsx';
@@ -34,13 +34,113 @@ function KnowledgeTypeIcon({ type }) {
   );
 }
 
-function KnowledgeCard({ entry, onDelete }) {
+function EditKnowledgeForm({ entry, onCancel, onSaved }) {
+  const [title, setTitle] = useState(entry.title || '');
+  const [content, setContent] = useState(entry.content || '');
+  const [type, setType] = useState(entry.knowledge_type || 'business_rule');
+  const [confidence, setConfidence] = useState(entry.confidence || 'confirmed');
+  const [tags, setTags] = useState((entry.tags || []).join(', '));
+
+  const mut = useMutation({
+    mutationFn: () => updateKnowledge(entry.id, {
+      title: title.trim(),
+      content: content.trim(),
+      knowledge_type: type,
+      confidence,
+      tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+    }),
+    onSuccess: () => onSaved?.(),
+  });
+
+  return (
+    <div style={{
+      background: colors.bgCard, borderRadius: radius.lg,
+      border: `1px solid ${colors.primary}60`,
+      padding: spacing.md, boxShadow: shadows.md,
+    }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: spacing.md, marginBottom: spacing.md }}>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={labelStyle}>Title *</label>
+          <input
+            style={inputStyle}
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div>
+          <label style={labelStyle}>Type</label>
+          <select style={inputStyle} value={type} onChange={(e) => setType(e.target.value)}>
+            {KNOWLEDGE_TYPES.map((t) => (
+              <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Confidence</label>
+          <select style={inputStyle} value={confidence} onChange={(e) => setConfidence(e.target.value)}>
+            {CONFIDENCE_LEVELS.map((c) => (
+              <option key={c.value} value={c.value}>{c.label}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={labelStyle}>Content *</label>
+          <textarea
+            style={{ ...inputStyle, height: 100, resize: 'vertical' }}
+            value={content}
+            onChange={(e) => setContent(e.target.value)}
+          />
+        </div>
+        <div style={{ gridColumn: '1 / -1' }}>
+          <label style={labelStyle}>Tags (comma-separated)</label>
+          <input
+            style={inputStyle}
+            value={tags}
+            onChange={(e) => setTags(e.target.value)}
+          />
+        </div>
+      </div>
+
+      {mut.isError && (
+        <p style={{ color: colors.danger, fontSize: typography.fontSizes.sm, margin: `0 0 ${spacing.sm}px`, fontFamily: typography.fontFamily }}>
+          {mut.error?.message || 'Failed to save'}
+        </p>
+      )}
+
+      <div style={{ display: 'flex', gap: spacing.sm, justifyContent: 'flex-end' }}>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+        <Button
+          variant="primary"
+          loading={mut.isPending}
+          disabled={!title.trim() || !content.trim()}
+          onClick={() => mut.mutate()}
+        >
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeCard({ entry, onDelete, onUpdated }) {
   const [hovered, setHovered] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [editing, setEditing] = useState(false);
   const deleteMut = useMutation({
     mutationFn: () => deleteKnowledge(entry.id),
     onSuccess: onDelete,
   });
+
+  if (editing) {
+    return (
+      <EditKnowledgeForm
+        entry={entry}
+        onCancel={() => setEditing(false)}
+        onSaved={() => { setEditing(false); onUpdated?.(); }}
+      />
+    );
+  }
 
   const typeInfo = KNOWLEDGE_TYPES.find((t) => t.value === entry.knowledge_type) || KNOWLEDGE_TYPES[3];
   const confInfo = CONFIDENCE_LEVELS.find((c) => c.value === entry.confidence) || { variant: 'muted', label: entry.confidence };
@@ -105,15 +205,27 @@ function KnowledgeCard({ entry, onDelete }) {
           </div>
         </div>
         {hovered && (
-          <Button
-            variant="ghost"
-            size="sm"
-            loading={deleteMut.isPending}
-            onClick={() => { if (confirm('Delete this entry?')) deleteMut.mutate(); }}
-            style={{ flexShrink: 0, color: colors.danger }}
-          >
-            ×
-          </Button>
+          <div style={{ display: 'flex', gap: spacing.xs, flexShrink: 0 }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditing(true)}
+              style={{ color: colors.primary }}
+              title="Edit entry"
+            >
+              ✎
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={deleteMut.isPending}
+              onClick={() => { if (confirm('Delete this entry?')) deleteMut.mutate(); }}
+              style={{ color: colors.danger }}
+              title="Delete entry"
+            >
+              ×
+            </Button>
+          </div>
         )}
       </div>
     </div>
@@ -351,6 +463,7 @@ export default function KnowledgePanel({ modelId }) {
                   key={entry.id}
                   entry={entry}
                   onDelete={() => qc.invalidateQueries({ queryKey: ['knowledge', modelId] })}
+                  onUpdated={() => qc.invalidateQueries({ queryKey: ['knowledge', modelId] })}
                 />
               ))}
             </div>

@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, memo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { streamChat } from '../../api.js';
 import { colors, spacing, radius, typography, shadows } from '../../theme.js';
@@ -46,7 +46,7 @@ function makeArtifact(toolName, content) {
   };
 }
 
-function UserBubble({ message }) {
+const UserBubble = memo(function UserBubble({ message }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: spacing.sm }}>
       <div style={{
@@ -61,7 +61,7 @@ function UserBubble({ message }) {
       </div>
     </div>
   );
-}
+});
 
 function ExpandableToolResult({ part }) {
   const [expanded, setExpanded] = useState(false);
@@ -122,7 +122,7 @@ function PinToCanvasButton({ onClick }) {
   );
 }
 
-function AssistantBubble({ message, onPinToCanvas }) {
+const AssistantBubble = memo(function AssistantBubble({ message, onPinToCanvas }) {
   const parts = message.parts || [{ type: 'text', content: message.content || '' }];
   const textParts = parts.filter((p) => p.type === 'text' && p.content?.trim());
 
@@ -197,7 +197,7 @@ function AssistantBubble({ message, onPinToCanvas }) {
       </div>
     </div>
   );
-}
+});
 
 function ThinkingIndicator() {
   return (

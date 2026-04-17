@@ -94,22 +94,27 @@ export default function WidgetConfigModal({ modelId, metadata, widget, onSave, o
           </div>
           <div>
             <label style={labelStyle}>Type</label>
-            <div style={{ display: 'flex', gap: spacing.xs }}>
-              {['table', 'card'].map((t) => (
+            <div style={{ display: 'flex', gap: spacing.xs, flexWrap: 'wrap' }}>
+              {[
+                { key: 'table', icon: '◈', label: 'Table' },
+                { key: 'card', icon: '#', label: 'Card' },
+                { key: 'bar', icon: '▥', label: 'Bar' },
+                { key: 'line', icon: '⟋', label: 'Line' },
+                { key: 'area', icon: '▤', label: 'Area' },
+              ].map(({ key, icon, label }) => (
                 <button
-                  key={t}
-                  onClick={() => setWidgetType(t)}
+                  key={key}
+                  onClick={() => setWidgetType(key)}
                   style={{
-                    padding: `${spacing.xs}px ${spacing.md}px`, borderRadius: radius.md,
-                    border: `1px solid ${widgetType === t ? colors.primary : colors.border}`,
-                    background: widgetType === t ? colors.primaryLight : 'transparent',
-                    color: widgetType === t ? colors.primary : colors.textSecondary,
+                    padding: `${spacing.xs}px ${spacing.sm}px`, borderRadius: radius.md,
+                    border: `1px solid ${widgetType === key ? colors.primary : colors.border}`,
+                    background: widgetType === key ? colors.primaryLight : 'transparent',
+                    color: widgetType === key ? colors.primary : colors.textSecondary,
                     fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm,
                     fontWeight: typography.fontWeights.medium, cursor: 'pointer',
-                    textTransform: 'capitalize',
                   }}
                 >
-                  {t === 'table' ? '◈ Table' : '# Card'}
+                  {icon} {label}
                 </button>
               ))}
             </div>
@@ -119,6 +124,11 @@ export default function WidgetConfigModal({ modelId, metadata, widget, onSave, o
         {widgetType === 'card' && (
           <p style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>
             Cards show a single aggregated number. Pick one measure and optional filters.
+          </p>
+        )}
+        {['bar', 'line', 'area'].includes(widgetType) && (
+          <p style={{ margin: `0 0 ${spacing.md}px`, fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>
+            Charts plot measures along a dimension. Add at least one row dimension (x-axis) and one or more measures (y-axis).
           </p>
         )}
 

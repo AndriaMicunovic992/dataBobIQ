@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useScenarios, useCreateScenario } from '../../hooks/useScenarios.js';
+import { useScenarios, useCreateScenario, useDeleteScenario } from '../../hooks/useScenarios.js';
 import { colors, spacing, radius, typography, shadows, transitions, inputStyle, labelStyle } from '../../theme.js';
 import { Button } from '../common/Button.jsx';
 
@@ -73,7 +73,8 @@ function formatRule(rule) {
   return `${field} (${rule.rule_type})`;
 }
 
-function ScenarioCard({ scenario, dashboards, onOpen }) {
+function ScenarioCard({ scenario, dashboards, onOpen, onDelete }) {
+  const [hovered, setHovered] = useState(false);
   const rules = scenario.rules || [];
   const color = scenario.color || colors.primary;
   const shown = rules.slice(0, 3);
@@ -93,12 +94,15 @@ function ScenarioCard({ scenario, dashboards, onOpen }) {
         transition: transitions.fast,
         minHeight: 180,
         fontFamily: typography.fontFamily,
+        position: 'relative',
       }}
       onMouseEnter={(e) => {
+        setHovered(true);
         e.currentTarget.style.boxShadow = shadows.md;
         e.currentTarget.style.borderColor = color;
       }}
       onMouseLeave={(e) => {
+        setHovered(false);
         e.currentTarget.style.boxShadow = shadows.sm;
         e.currentTarget.style.borderColor = colors.border;
       }}
@@ -124,6 +128,24 @@ function ScenarioCard({ scenario, dashboards, onOpen }) {
         }}>
           {rules.length} {rules.length === 1 ? 'rule' : 'rules'}
         </span>
+        {hovered && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (window.confirm(`Delete scenario "${scenario.name}"?`)) onDelete(scenario.id);
+            }}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer',
+              color: colors.textMuted, fontSize: 14, lineHeight: 1,
+              padding: '2px 4px', flexShrink: 0,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = colors.danger; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textMuted; }}
+            title="Delete scenario"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {rules.length === 0 ? (
@@ -437,6 +459,7 @@ export default function HomeView({
   recentQuestions = [],
 }) {
   const { data: scenarios = [], isLoading, isError, error } = useScenarios(modelId);
+  const deleteMut = useDeleteScenario(modelId);
   const [showNewScenario, setShowNewScenario] = useState(false);
 
   const handleScenarioOpen = (scenario, dashboardId) => {
@@ -541,6 +564,7 @@ export default function HomeView({
                 scenario={s}
                 dashboards={dashboards}
                 onOpen={handleScenarioOpen}
+                onDelete={(id) => deleteMut.mutate(id)}
               />
             ))}
           </div>

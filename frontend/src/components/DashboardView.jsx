@@ -9,12 +9,41 @@ import PivotTable from './PivotTable.jsx';
 import DashboardCard from './DashboardCard.jsx';
 import DashboardChartWidget from './DashboardChart.jsx';
 import WidgetConfigModal from './WidgetConfigModal.jsx';
+import { CompareCard, CompareChart, CompareTable, buildSeries } from './DashboardCompare.jsx';
 
 const CHART_TYPES = new Set(['bar', 'line', 'area']);
 
 const GRID_COLS = 12;
 const ROW_HEIGHT_PX = 80;
 const GAP_PX = 16;
+
+// Build a pivot API config from a widget's saved config, without scenario_ids.
+// Used for compare mode where we fire one query per selected scenario.
+function buildWidgetBaseConfig(widget, yearFilter, metadata) {
+  const config = widget.config || {};
+  if (!config.dataset_id || !config.measures?.length) return null;
+  const filters = { ...(config.filters || {}) };
+  const joinDims = { ...(config.join_dimensions || {}) };
+  if (yearFilter) {
+    filters.year = [String(yearFilter)];
+    const yearOwner = metadata?.fieldDatasetMap?.year;
+    if (yearOwner && yearOwner !== config.dataset_id) {
+      joinDims.year = yearOwner;
+    }
+  }
+  const wt = widget.widget_type;
+  const isCard = wt === 'card';
+  return {
+    model_id: config.model_id,
+    dataset_id: config.dataset_id,
+    row_dimensions: isCard ? [] : (config.row_dimensions || []),
+    column_dimension: isCard ? null : (config.column_dimension || null),
+    measures: config.measures,
+    filters,
+    join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
+    limit: isCard ? 1 : (config.limit || 500),
+  };
+}
 
 const RULE_TYPES = [
   { value: 'multiplier', label: 'Multiplier', desc: 'e.g. x1.1 = +10%' },
@@ -63,6 +92,139 @@ function WidgetErrorState({ error }) {
   return (
     <div style={{ padding: spacing.md, color: colors.danger, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.sm }}>
       {error.message}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select scenario picker — picks one for overlay, or multiple for
+// side-by-side comparison. Rendered as a button + checkbox popover.
+// ---------------------------------------------------------------------------
+function ScenarioMultiSelect({ scenarios, selectedIds, onChange }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (!containerRef.current) return;
+      if (!containerRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  const label = (() => {
+    if (selectedIds.length === 0) return 'Actuals only';
+    if (selectedIds.length === 1) {
+      const s = scenarios.find((x) => x.id === selectedIds[0]);
+      return s?.name || '1 scenario';
+    }
+    return `Compare · Actuals + ${selectedIds.length}`;
+  })();
+
+  const toggle = (id) => {
+    if (selectedIds.includes(id)) {
+      onChange(selectedIds.filter((x) => x !== id));
+    } else {
+      onChange([...selectedIds, id]);
+    }
+  };
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', minWidth: 240 }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          ...inputStyle, marginBottom: 0, padding: '8px 12px',
+          fontSize: typography.fontSizes.sm, textAlign: 'left',
+          display: 'flex', alignItems: 'center', gap: spacing.xs,
+          cursor: 'pointer', width: '100%',
+        }}
+      >
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {label}
+        </span>
+        <span style={{ color: colors.textMuted, fontSize: 10 }}>{'\u25BE'}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50,
+          background: colors.bgCard, border: `1px solid ${colors.border}`,
+          borderRadius: radius.md, boxShadow: shadows.lg,
+          padding: spacing.xs, maxHeight: 320, overflowY: 'auto',
+        }}>
+          <button
+            onClick={() => onChange([])}
+            style={{
+              width: '100%', padding: `${spacing.xs}px ${spacing.sm}px`,
+              background: selectedIds.length === 0 ? colors.bgHover : 'transparent',
+              border: 'none', borderRadius: radius.sm, cursor: 'pointer',
+              textAlign: 'left', fontFamily: typography.fontFamily,
+              fontSize: typography.fontSizes.sm, color: colors.textSecondary,
+              marginBottom: 2,
+            }}
+          >
+            Actuals only
+          </button>
+          <div style={{
+            margin: `${spacing.xs}px 0`,
+            borderTop: `1px solid ${colors.border}`,
+          }} />
+          {scenarios.length === 0 ? (
+            <div style={{
+              padding: `${spacing.xs}px ${spacing.sm}px`,
+              fontSize: typography.fontSizes.sm, color: colors.textMuted,
+              fontStyle: 'italic', fontFamily: typography.fontFamily,
+            }}>
+              No scenarios yet
+            </div>
+          ) : scenarios.map((s) => {
+            const checked = selectedIds.includes(s.id);
+            return (
+              <label key={s.id} style={{
+                display: 'flex', alignItems: 'center', gap: spacing.sm,
+                padding: `${spacing.xs}px ${spacing.sm}px`,
+                borderRadius: radius.sm, cursor: 'pointer',
+                background: checked ? colors.bgHover : 'transparent',
+                fontFamily: typography.fontFamily,
+              }}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={() => toggle(s.id)}
+                  style={{ margin: 0 }}
+                />
+                <span style={{
+                  width: 10, height: 10, borderRadius: '50%',
+                  background: s.color || colors.primary, flexShrink: 0,
+                }} />
+                <span style={{
+                  flex: 1, fontSize: typography.fontSizes.sm,
+                  color: colors.textPrimary, overflow: 'hidden',
+                  textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>
+                  {s.name}
+                </span>
+                <span style={{ fontSize: typography.fontSizes.xs, color: colors.textMuted }}>
+                  {(s.rules || []).length}
+                </span>
+              </label>
+            );
+          })}
+          {selectedIds.length >= 2 && (
+            <div style={{
+              margin: `${spacing.xs}px 0 0`,
+              padding: `${spacing.xs}px ${spacing.sm}px`,
+              fontSize: typography.fontSizes.xs, color: colors.textMuted,
+              fontFamily: typography.fontFamily, fontStyle: 'italic',
+              borderTop: `1px solid ${colors.border}`,
+            }}>
+              Compare mode — widgets will show Actuals + each selected scenario side-by-side.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -184,13 +346,16 @@ function useGridInteraction(widgets, onLayoutChange) {
 // ---------------------------------------------------------------------------
 // Widget wrapper with drag header + resize handle
 // ---------------------------------------------------------------------------
-function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, metadata, onDragStart, onResizeStart }) {
+function WidgetFrame({ widget, onEdit, onDelete, scenarioIds, compareSeries, yearFilter, metadata, onDragStart, onResizeStart }) {
   const [hovered, setHovered] = useState(false);
   const pos = widget.position || {};
   const col = pos.col || 1;
   const row = pos.row || 1;
   const colSpan = pos.colSpan || 6;
   const rowSpan = pos.rowSpan || 4;
+  const compareMode = (compareSeries?.length || 0) > 1;
+  const primaryScenarioId = scenarioIds?.[0] || null;
+  const baseConfig = compareMode ? buildWidgetBaseConfig(widget, yearFilter, metadata) : null;
 
   return (
     <div
@@ -244,12 +409,20 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioId, yearFilter, metadat
         padding: widget.widget_type === 'card' ? 0 : undefined,
         display: 'flex',
       }}>
-        {widget.widget_type === 'card' ? (
-          <DashboardCard widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
+        {compareMode && baseConfig ? (
+          widget.widget_type === 'card' ? (
+            <CompareCard baseConfig={baseConfig} series={compareSeries} />
+          ) : CHART_TYPES.has(widget.widget_type) ? (
+            <CompareChart baseConfig={baseConfig} series={compareSeries} chartType={widget.widget_type} />
+          ) : (
+            <CompareTable baseConfig={baseConfig} series={compareSeries} />
+          )
+        ) : widget.widget_type === 'card' ? (
+          <DashboardCard widget={widget} scenarioId={primaryScenarioId} yearFilter={yearFilter} metadata={metadata} />
         ) : CHART_TYPES.has(widget.widget_type) ? (
-          <DashboardChartWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
+          <DashboardChartWidget widget={widget} scenarioId={primaryScenarioId} yearFilter={yearFilter} metadata={metadata} />
         ) : (
-          <DashboardTableWidget widget={widget} scenarioId={scenarioId} yearFilter={yearFilter} metadata={metadata} />
+          <DashboardTableWidget widget={widget} scenarioId={primaryScenarioId} yearFilter={yearFilter} metadata={metadata} />
         )}
       </div>
 
@@ -828,7 +1001,18 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
   const saveLayoutMut = useSaveLayout(dashboardId);
 
   const [editingWidget, setEditingWidget] = useState(null);
-  const [scenarioId, setScenarioId] = useState(initialScenarioId || '');
+  const [scenarioIds, setScenarioIds] = useState(initialScenarioId ? [initialScenarioId] : []);
+  const primaryScenarioId = scenarioIds[0] || '';
+  const compareMode = scenarioIds.length >= 2;
+  const scenariosById = useMemo(() => {
+    const m = {};
+    for (const s of scenarios) m[s.id] = s;
+    return m;
+  }, [scenarios]);
+  const compareSeries = useMemo(
+    () => (compareMode ? buildSeries(scenarioIds, scenariosById) : []),
+    [compareMode, scenarioIds, scenariosById]
+  );
   const [yearFilter, setYearFilter] = useState('');
   const [localPositions, setLocalPositions] = useState({});
   const [sidebarHovered, setSidebarHovered] = useState(false);
@@ -961,20 +1145,16 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
             </div>
           )}
 
-          {/* Scenario selector — always visible so users can pick/compare. */}
+          {/* Scenario selector — multi-select for comparison. Picking 2+
+              scenarios switches widgets into compare mode (Actuals + each
+              selected scenario rendered side-by-side). */}
           <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
             <label style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>Scenario:</label>
-            <select
-              style={{ ...inputStyle, marginBottom: 0, minWidth: 220, padding: '8px 12px', fontSize: typography.fontSizes.sm }}
-              value={scenarioId}
-              onChange={(e) => setScenarioId(e.target.value)}
-            >
-              <option value="">Actuals only</option>
-              {scenarios.map((s) => (
-                <option key={s.id} value={s.id}>{s.name} ({(s.rules || []).length} rules)</option>
-              ))}
-              {scenarios.length === 0 && <option disabled value="__none__">No scenarios yet</option>}
-            </select>
+            <ScenarioMultiSelect
+              scenarios={scenarios}
+              selectedIds={scenarioIds}
+              onChange={setScenarioIds}
+            />
           </div>
 
           <Button variant="primary" size="sm" onClick={() => setEditingWidget('new')}>
@@ -1022,7 +1202,8 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
                 <WidgetFrame
                   key={w.id}
                   widget={w}
-                  scenarioId={scenarioId || null}
+                  scenarioIds={scenarioIds}
+                  compareSeries={compareSeries}
                   yearFilter={yearFilter || null}
                   metadata={metadata}
                   onEdit={setEditingWidget}
@@ -1062,7 +1243,7 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
       >
         <ScenarioSidebar
           modelId={modelId}
-          scenarioId={scenarioId}
+          scenarioId={primaryScenarioId}
           metadata={metadata}
           expanded={sidebarExpanded}
           onFormOpenChange={setSidebarFormOpen}

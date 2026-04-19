@@ -86,8 +86,11 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
             dataset.ai_analyzed = True
 
             # Apply AI-suggested canonical names to DatasetColumn records.
-            # Deduplicate: when multiple sources map to the same target,
-            # keep only the highest-confidence mapping.
+            # Deduplicate by canonical name within the whole model: each
+            # canonical name can only be claimed by ONE source column in
+            # the entire model. The highest-confidence candidate wins
+            # within this dataset; canonical names already claimed by
+            # another dataset in the same model are skipped entirely.
             mappings = mapping_config.get("mappings", [])
             if mappings:
                 col_result = await db.execute(
@@ -95,6 +98,20 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
                 )
                 db_columns = col_result.scalars().all()
                 col_by_source = {c.source_name: c for c in db_columns}
+
+                # Canonical names already claimed by other datasets in the model
+                already_claimed: set[str] = set()
+                if dataset.model_id:
+                    claimed_result = await db.execute(
+                        select(DatasetColumn.canonical_name)
+                        .join(Dataset, DatasetColumn.dataset_id == Dataset.id)
+                        .where(
+                            Dataset.model_id == dataset.model_id,
+                            Dataset.id != dataset_id,
+                            DatasetColumn.canonical_name.isnot(None),
+                        )
+                    )
+                    already_claimed = {r[0] for r in claimed_result.all() if r[0]}
 
                 sorted_mappings = sorted(
                     mappings, key=lambda m: m.get("confidence", 0), reverse=True
@@ -104,10 +121,10 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
                     src = m.get("source", "")
                     tgt = m.get("target", "")
                     if src in col_by_source and tgt:
-                        if tgt in claimed_targets:
+                        if tgt in claimed_targets or tgt in already_claimed:
                             logger.warning(
-                                "Skipping duplicate canonical name '%s' for column '%s' "
-                                "(already claimed by a higher-confidence mapping)",
+                                "Skipping canonical name '%s' for column '%s': "
+                                "already claimed in this model",
                                 tgt, src,
                             )
                             continue

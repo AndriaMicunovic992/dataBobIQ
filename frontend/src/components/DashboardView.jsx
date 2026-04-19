@@ -9,7 +9,7 @@ import PivotTable from './PivotTable.jsx';
 import DashboardCard from './DashboardCard.jsx';
 import DashboardChartWidget from './DashboardChart.jsx';
 import WidgetConfigModal from './WidgetConfigModal.jsx';
-import { CompareCard, CompareChart, CompareTable, buildSeries } from './DashboardCompare.jsx';
+import { CompareCard, CompareChart, CompareTable, buildSeries, ACTUALS_ID, ACTUALS_COLOR } from './DashboardCompare.jsx';
 
 const CHART_TYPES = new Set(['bar', 'line', 'area']);
 
@@ -107,20 +107,20 @@ function ScenarioMultiSelect({ scenarios, selectedIds, onChange }) {
   useEffect(() => {
     if (!open) return;
     const handler = (e) => {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(e.target)) setOpen(false);
+      if (!containerRef.current?.contains(e.target)) setOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
   const label = (() => {
-    if (selectedIds.length === 0) return 'Actuals only';
-    if (selectedIds.length === 1) {
-      const s = scenarios.find((x) => x.id === selectedIds[0]);
-      return s?.name || '1 scenario';
-    }
-    return `Compare · Actuals + ${selectedIds.length}`;
+    if (selectedIds.length === 0) return 'Actuals';
+    const names = selectedIds.map((id) => {
+      if (id === ACTUALS_ID) return 'Actuals';
+      return scenarios.find((s) => s.id === id)?.name || id;
+    });
+    if (names.length === 1) return names[0];
+    return `Comparing ${names.length}`;
   })();
 
   const toggle = (id) => {
@@ -130,6 +130,8 @@ function ScenarioMultiSelect({ scenarios, selectedIds, onChange }) {
       onChange([...selectedIds, id]);
     }
   };
+
+  const actualsChecked = selectedIds.includes(ACTUALS_ID);
 
   return (
     <div ref={containerRef} style={{ position: 'relative', minWidth: 240 }}>
@@ -154,23 +156,37 @@ function ScenarioMultiSelect({ scenarios, selectedIds, onChange }) {
           borderRadius: radius.md, boxShadow: shadows.lg,
           padding: spacing.xs, maxHeight: 320, overflowY: 'auto',
         }}>
-          <button
-            onClick={() => onChange([])}
-            style={{
-              width: '100%', padding: `${spacing.xs}px ${spacing.sm}px`,
-              background: selectedIds.length === 0 ? colors.bgHover : 'transparent',
-              border: 'none', borderRadius: radius.sm, cursor: 'pointer',
-              textAlign: 'left', fontFamily: typography.fontFamily,
-              fontSize: typography.fontSizes.sm, color: colors.textSecondary,
-              marginBottom: 2,
-            }}
-          >
-            Actuals only
-          </button>
-          <div style={{
-            margin: `${spacing.xs}px 0`,
-            borderTop: `1px solid ${colors.border}`,
-          }} />
+          {/* Actuals — treated as a scenario you can toggle */}
+          <label style={{
+            display: 'flex', alignItems: 'center', gap: spacing.sm,
+            padding: `${spacing.xs}px ${spacing.sm}px`,
+            borderRadius: radius.sm, cursor: 'pointer',
+            background: actualsChecked ? colors.bgHover : 'transparent',
+            fontFamily: typography.fontFamily,
+          }}>
+            <input
+              type="checkbox"
+              checked={actualsChecked}
+              onChange={() => toggle(ACTUALS_ID)}
+              style={{ margin: 0 }}
+            />
+            <span style={{
+              width: 10, height: 10, borderRadius: '50%',
+              background: ACTUALS_COLOR, flexShrink: 0,
+            }} />
+            <span style={{
+              flex: 1, fontSize: typography.fontSizes.sm,
+              color: colors.textPrimary,
+            }}>
+              Actuals
+            </span>
+          </label>
+          {scenarios.length > 0 && (
+            <div style={{
+              margin: `${spacing.xs}px 0`,
+              borderTop: `1px solid ${colors.border}`,
+            }} />
+          )}
           {scenarios.length === 0 ? (
             <div style={{
               padding: `${spacing.xs}px ${spacing.sm}px`,
@@ -220,7 +236,7 @@ function ScenarioMultiSelect({ scenarios, selectedIds, onChange }) {
               fontFamily: typography.fontFamily, fontStyle: 'italic',
               borderTop: `1px solid ${colors.border}`,
             }}>
-              Compare mode — widgets will show Actuals + each selected scenario side-by-side.
+              Compare mode — selected items shown side-by-side.
             </div>
           )}
         </div>
@@ -353,8 +369,12 @@ function WidgetFrame({ widget, onEdit, onDelete, scenarioIds, compareSeries, yea
   const row = pos.row || 1;
   const colSpan = pos.colSpan || 6;
   const rowSpan = pos.rowSpan || 4;
-  const compareMode = (compareSeries?.length || 0) > 1;
-  const primaryScenarioId = scenarioIds?.[0] || null;
+  const compareMode = (compareSeries?.length || 0) >= 2;
+  const primaryScenarioId = (() => {
+    const id = scenarioIds?.[0];
+    if (!id || id === ACTUALS_ID) return null;
+    return id;
+  })();
   const baseConfig = compareMode ? buildWidgetBaseConfig(widget, yearFilter, metadata) : null;
 
   return (
@@ -1001,8 +1021,9 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
   const saveLayoutMut = useSaveLayout(dashboardId);
 
   const [editingWidget, setEditingWidget] = useState(null);
-  const [scenarioIds, setScenarioIds] = useState(initialScenarioId ? [initialScenarioId] : []);
-  const primaryScenarioId = scenarioIds[0] || '';
+  const [scenarioIds, setScenarioIds] = useState(
+    initialScenarioId ? [ACTUALS_ID, initialScenarioId] : [ACTUALS_ID]
+  );
   const compareMode = scenarioIds.length >= 2;
   const scenariosById = useMemo(() => {
     const m = {};
@@ -1013,6 +1034,7 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
     () => (compareMode ? buildSeries(scenarioIds, scenariosById) : []),
     [compareMode, scenarioIds, scenariosById]
   );
+  const sidebarScenarioId = scenarioIds.find((id) => id !== ACTUALS_ID) || '';
   const [yearFilter, setYearFilter] = useState('');
   const [localPositions, setLocalPositions] = useState({});
   const [sidebarHovered, setSidebarHovered] = useState(false);
@@ -1145,9 +1167,8 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
             </div>
           )}
 
-          {/* Scenario selector — multi-select for comparison. Picking 2+
-              scenarios switches widgets into compare mode (Actuals + each
-              selected scenario rendered side-by-side). */}
+          {/* Scenario selector — multi-select with Actuals as an option.
+              Picking 2+ items switches widgets into compare mode. */}
           <div style={{ display: 'flex', alignItems: 'center', gap: spacing.xs }}>
             <label style={{ fontSize: typography.fontSizes.sm, color: colors.textMuted, fontFamily: typography.fontFamily }}>Scenario:</label>
             <ScenarioMultiSelect
@@ -1243,7 +1264,7 @@ export default function DashboardView({ dashboardId, modelId, initialScenarioId 
       >
         <ScenarioSidebar
           modelId={modelId}
-          scenarioId={primaryScenarioId}
+          scenarioId={sidebarScenarioId}
           metadata={metadata}
           expanded={sidebarExpanded}
           onFormOpenChange={setSidebarFormOpen}

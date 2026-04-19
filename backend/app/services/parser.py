@@ -117,13 +117,24 @@ def list_excel_sheets(file_path: str) -> list[str]:
     if path.suffix.lower() not in _EXCEL_SUFFIXES:
         return []
 
+    def _clean(raw: list) -> list[str]:
+        out: list[str] = []
+        for item in raw:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if s:
+                out.append(s)
+        return out
+
     # fastexcel (calamine binding) enumerates sheets without loading data.
     try:
         import fastexcel
 
         reader = fastexcel.read_excel(str(path))
-        names = list(reader.sheet_names)
+        names = _clean(list(reader.sheet_names))
         if names:
+            logger.info("fastexcel detected %d sheet(s) in %s: %s", len(names), file_path, names)
             return names
     except Exception as exc:  # pragma: no cover - runtime-dep dependent
         logger.warning("fastexcel sheet enumeration failed for %s: %s", file_path, exc)
@@ -134,8 +145,9 @@ def list_excel_sheets(file_path: str) -> list[str]:
 
         wb = load_workbook(str(path), read_only=True, data_only=True)
         try:
-            names = list(wb.sheetnames)
+            names = _clean(list(wb.sheetnames))
             if names:
+                logger.info("openpyxl detected %d sheet(s) in %s: %s", len(names), file_path, names)
                 return names
         finally:
             wb.close()
@@ -146,7 +158,10 @@ def list_excel_sheets(file_path: str) -> list[str]:
     try:
         data = pl.read_excel(str(path), engine="calamine", sheet_id=0, infer_schema_length=0)
         if isinstance(data, dict):
-            return list(data.keys())
+            names = _clean(list(data.keys()))
+            if names:
+                logger.info("polars detected %d sheet(s) in %s: %s", len(names), file_path, names)
+                return names
     except Exception as exc:
         logger.warning("polars sheet enumeration failed for %s: %s", file_path, exc)
 

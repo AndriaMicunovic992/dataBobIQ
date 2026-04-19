@@ -7,7 +7,7 @@ import ConversationPane from './ConversationPane.jsx';
 import Canvas from './Canvas.jsx';
 import PromptBar from './PromptBar.jsx';
 
-export default function AgentWorkspace({ modelId, dashboards, onExit, onOpenDashboard }) {
+export default function AgentWorkspace({ modelId, dashboards, onOpenDashboard }) {
   const {
     tabs, activeId, setActiveId,
     openThread, closeTab, updateTab, renameTab,
@@ -66,7 +66,7 @@ export default function AgentWorkspace({ modelId, dashboards, onExit, onOpenDash
         onSelect={setActiveId}
         onClose={closeTab}
         onRename={renameTab}
-        onExit={onExit}
+
       />
 
       <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

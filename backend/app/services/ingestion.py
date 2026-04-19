@@ -85,7 +85,9 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
             dataset.mapping_config = mapping_config
             dataset.ai_analyzed = True
 
-            # Apply AI-suggested canonical names to DatasetColumn records
+            # Apply AI-suggested canonical names to DatasetColumn records.
+            # Deduplicate: when multiple sources map to the same target,
+            # keep only the highest-confidence mapping.
             mappings = mapping_config.get("mappings", [])
             if mappings:
                 col_result = await db.execute(
@@ -93,10 +95,23 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
                 )
                 db_columns = col_result.scalars().all()
                 col_by_source = {c.source_name: c for c in db_columns}
-                for m in mappings:
+
+                sorted_mappings = sorted(
+                    mappings, key=lambda m: m.get("confidence", 0), reverse=True
+                )
+                claimed_targets: set[str] = set()
+                for m in sorted_mappings:
                     src = m.get("source", "")
                     tgt = m.get("target", "")
                     if src in col_by_source and tgt:
+                        if tgt in claimed_targets:
+                            logger.warning(
+                                "Skipping duplicate canonical name '%s' for column '%s' "
+                                "(already claimed by a higher-confidence mapping)",
+                                tgt, src,
+                            )
+                            continue
+                        claimed_targets.add(tgt)
                         col_by_source[src].canonical_name = tgt
 
             await db.commit()

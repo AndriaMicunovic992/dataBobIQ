@@ -243,21 +243,8 @@ export default function FieldManager({ metadata, pivotConfig, onConfigChange }) 
   const values = pivotConfig.values || [];
   const aggMap = pivotConfig.aggregations || {};
 
-  // Determine which dataset owns the measures (the "fact" table).
-  // Lock measures to that dataset, but show dimensions from ALL datasets
-  // so users can group by lookup/hierarchy columns via relationships.
-  const fieldDatasetMap = metadata.fieldDatasetMap || {};
-  let factDatasetId = null;
-  for (const f of values) {
-    if (fieldDatasetMap[f]) { factDatasetId = fieldDatasetMap[f]; break; }
-  }
-
-  // Dimensions: always show all (cross-dataset grouping via JOINs)
   const dimensions = allDimensions;
-  // Measures: lock to the fact dataset once one is selected
-  const measures = factDatasetId
-    ? allMeasures.filter((m) => m._dataset_id === factDatasetId)
-    : allMeasures;
+  const measures = allMeasures;
 
   const update = (patch) => onConfigChange({ ...pivotConfig, ...patch });
 

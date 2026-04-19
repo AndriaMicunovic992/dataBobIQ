@@ -68,14 +68,10 @@ def detect_relationships(
             for oc in other_dim_cols:
                 oc_name = oc.get("canonical_name") or oc["source_name"]
 
-                # Quick heuristic: column names should be similar or share a word,
-                # OR both are date/time-typed columns (calendar join candidates).
-                if not _names_could_match(
-                    nc_name, nc["source_name"], oc_name, oc["source_name"],
-                    nc_type=nc.get("data_type"), oc_type=oc.get("data_type"),
-                ):
-                    continue
-
+                # With key-only filtering the candidate set is small, so we
+                # skip the name heuristic and check actual value overlap for
+                # every pair.  This catches cross-language column names
+                # (e.g. "Projektnummer" ↔ "projectnumber").
                 try:
                     coverage = _compute_coverage(
                         new_view, nc_name, other_view, oc_name

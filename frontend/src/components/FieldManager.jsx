@@ -129,7 +129,10 @@ function FieldPicker({ available, onSelect, onClose, grouped = {} }) {
 
 function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMultiple = true, aggMap = {}, dimensions = [], measures = [], datasets = [] }) {
   const [open, setOpen] = useState(false);
-  const pool = label === 'Values' ? measures : dimensions;
+  const all = [...dimensions, ...measures].filter(
+    (f, i, arr) => arr.findIndex((x) => (x.field || x.name) === (f.field || f.name)) === i,
+  );
+  const pool = label === 'Values' ? all : dimensions;
   const available = pool.filter(
     (f) => !fields.some((sel) => sel === (f.field || f.name))
   );

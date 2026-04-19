@@ -297,6 +297,31 @@ async def update_column(
     await db.commit()
     logger.info("Updated column %s on dataset %s: %s", column_id, dataset_id, update_data)
 
+    # If column_role changed, re-detect relationships for this dataset
+    if "column_role" in update_data:
+        ds_for_rel = (await db.execute(
+            select(Dataset).where(Dataset.id == dataset_id)
+        )).scalar_one_or_none()
+        if ds_for_rel and ds_for_rel.status == "active" and ds_for_rel.model_id:
+            try:
+                all_cols = (await db.execute(
+                    select(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id)
+                )).scalars().all()
+                col_meta = [
+                    {
+                        "source_name": c.source_name,
+                        "canonical_name": c.canonical_name,
+                        "column_role": c.column_role,
+                        "data_type": c.data_type,
+                    }
+                    for c in all_cols
+                ]
+                from app.services.ingestion import _detect_and_save_relationships
+                await _detect_and_save_relationships(dataset_id, ds_for_rel.model_id, col_meta)
+                logger.info("Re-detected relationships after role change for dataset %s", dataset_id)
+            except Exception:
+                logger.warning("Relationship re-detection failed for %s", dataset_id, exc_info=True)
+
     # Return full dataset with columns
     ds_result = await db.execute(
         select(Dataset)

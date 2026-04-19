@@ -10,6 +10,7 @@ import {
 import { executePivot } from '../api.js';
 import { colors, spacing, radius, typography } from '../theme.js';
 
+export const ACTUALS_ID = '__actuals';
 const ACTUALS_COLOR = colors.textSecondary;
 const CHART_TYPES = new Set(['bar', 'line', 'area']);
 
@@ -22,19 +23,23 @@ function formatNum(val) {
   return Number(val).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-// Build the series list: Actuals baseline plus each selected scenario.
-// Each series gets a stable label and a color.
-function buildSeries(scenarioIds, scenariosById) {
-  const series = [{ key: '__actuals', label: 'Actuals', scenarioId: null, color: ACTUALS_COLOR }];
-  for (const id of scenarioIds) {
-    const s = scenariosById[id];
-    if (!s) continue;
-    series.push({
-      key: id,
-      label: s.name,
-      scenarioId: id,
-      color: s.color || colors.primary,
-    });
+// Build the series list from the current selection. Actuals is included only
+// when ACTUALS_ID is in the selection — it is no longer always-on.
+function buildSeries(selectedIds, scenariosById) {
+  const series = [];
+  for (const id of selectedIds) {
+    if (id === ACTUALS_ID) {
+      series.push({ key: ACTUALS_ID, label: 'Actuals', scenarioId: null, color: ACTUALS_COLOR });
+    } else {
+      const s = scenariosById[id];
+      if (!s) continue;
+      series.push({
+        key: id,
+        label: s.name,
+        scenarioId: id,
+        color: s.color || colors.primary,
+      });
+    }
   }
   return series;
 }
@@ -402,4 +407,4 @@ export function CompareTable({ baseConfig, series }) {
   );
 }
 
-export { CHART_TYPES, buildSeries };
+export { CHART_TYPES, buildSeries, ACTUALS_COLOR };

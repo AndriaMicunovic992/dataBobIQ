@@ -256,8 +256,10 @@ export function CompareChart({ baseConfig, series, chartType }) {
 }
 
 // ---------------------------------------------------------------------------
-// Table compare — dimension columns, then measure columns grouped by scenario.
-// Renders as a compact HTML table with scenario header grouping.
+// Table compare — dimension columns, then measure/column-pivoted values with
+// scenarios nested inside each. This makes apples-to-apples comparison easy:
+// you see Scenario A's January next to Scenario B's January, rather than all
+// of A's months and then all of B's months.
 // ---------------------------------------------------------------------------
 export function CompareTable({ baseConfig, series }) {
   const results = useCompareQueries(baseConfig, series);
@@ -345,34 +347,43 @@ export function CompareTable({ baseConfig, series }) {
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', fontFamily: typography.fontFamily }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
-          {/* Scenario group header row */}
+          {/* Outer header row — one group per column value (measure or pivoted
+              column-dimension value), spanning all scenarios. */}
           <tr>
             {dimCols.map((d) => (
               <th key={`dim-group-${d}`} style={{ ...thBase, borderBottom: 'none' }} rowSpan={2}>
                 {d}
               </th>
             ))}
-            {series.map((s) => (
+            {measureFields.map((m) => (
               <th
-                key={`series-${s.key}`}
-                colSpan={measureFields.length}
+                key={`measure-${m}`}
+                colSpan={series.length}
                 style={{
                   ...thBase,
-                  borderBottom: `2px solid ${s.color}`,
                   textAlign: 'center',
-                  color: s.color,
+                  borderBottom: `1px solid ${colors.border}`,
                 }}
               >
-                {s.label}
+                {m}
               </th>
             ))}
           </tr>
-          {/* Measure header row */}
+          {/* Inner header row — one cell per scenario under each column value.
+              Colored by scenario so you can read the series at a glance. */}
           <tr>
-            {series.map((s) => (
-              measureFields.map((m) => (
-                <th key={`mh-${s.key}-${m}`} style={{ ...thBase, textAlign: 'right' }}>
-                  {m}
+            {measureFields.map((m) => (
+              series.map((s) => (
+                <th
+                  key={`mh-${m}-${s.key}`}
+                  style={{
+                    ...thBase,
+                    textAlign: 'right',
+                    color: s.color,
+                    borderBottom: `2px solid ${s.color}`,
+                  }}
+                >
+                  {s.label}
                 </th>
               ))
             ))}
@@ -388,11 +399,11 @@ export function CompareTable({ baseConfig, series }) {
                     {String(r.dims[d] ?? '')}
                   </td>
                 ))}
-                {series.map((s) => (
-                  measureFields.map((m) => {
+                {measureFields.map((m) => (
+                  series.map((s) => {
                     const v = r.cells[s.key]?.[m];
                     return (
-                      <td key={`${key}-${s.key}-${m}`} style={{ ...td, textAlign: 'right' }}>
+                      <td key={`${key}-${m}-${s.key}`} style={{ ...td, textAlign: 'right' }}>
                         {typeof v === 'number' ? formatNum(v) : '—'}
                       </td>
                     );

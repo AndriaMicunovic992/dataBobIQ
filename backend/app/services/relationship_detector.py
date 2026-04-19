@@ -51,6 +51,12 @@ def detect_relationships(
         if c.get("column_role") == "key"
         and c.get("data_type") not in ("numeric", "currency")
     ]
+    logger.info(
+        "Relationship detection for %s: %d key columns = %s",
+        new_dataset_id[:8],
+        len(new_dim_cols),
+        [(c.get("canonical_name") or c.get("source_name"), c.get("data_type")) for c in new_dim_cols],
+    )
 
     for other_ds in other_datasets:
         other_id = other_ds["id"]
@@ -62,6 +68,12 @@ def detect_relationships(
             if c.get("column_role") == "key"
             and c.get("data_type") not in ("numeric", "currency")
         ]
+        logger.info(
+            "  vs %s: %d key columns = %s",
+            other_id[:8],
+            len(other_dim_cols),
+            [(c.get("canonical_name") or c.get("source_name"), c.get("data_type")) for c in other_dim_cols],
+        )
 
         for nc in new_dim_cols:
             nc_name = nc.get("canonical_name") or nc["source_name"]
@@ -77,12 +89,17 @@ def detect_relationships(
                         new_view, nc_name, other_view, oc_name
                     )
                 except Exception:
-                    logger.debug(
+                    logger.warning(
                         "Could not compute coverage %s.%s <-> %s.%s",
                         new_view, nc_name, other_view, oc_name,
                         exc_info=True,
                     )
                     continue
+
+                logger.info(
+                    "    coverage %s.%s <-> %s.%s = %.2f%%",
+                    new_view, nc_name, other_view, oc_name, coverage * 100,
+                )
 
                 if coverage >= _MIN_COVERAGE_PCT:
                     rel_type = _infer_relationship_type(
@@ -165,22 +182,27 @@ def _compute_coverage(
     view_a: str, col_a: str,
     view_b: str, col_b: str,
 ) -> float:
-    """Compute the fraction of distinct values in view_a.col_a that exist in view_b.col_b."""
+    """Compute the fraction of distinct values in view_a.col_a that exist in view_b.col_b.
+
+    Values are cast to VARCHAR, trimmed, and empty strings treated as NULL so
+    cross-source joins aren't broken by trailing whitespace or blank cells.
+    """
     sql = f"""
         WITH a_vals AS (
-            SELECT DISTINCT CAST("{col_a}" AS VARCHAR) AS v
+            SELECT DISTINCT NULLIF(TRIM(CAST("{col_a}" AS VARCHAR)), '') AS v
             FROM {view_a}
             WHERE "{col_a}" IS NOT NULL
         ),
         b_vals AS (
-            SELECT DISTINCT CAST("{col_b}" AS VARCHAR) AS v
+            SELECT DISTINCT NULLIF(TRIM(CAST("{col_b}" AS VARCHAR)), '') AS v
             FROM {view_b}
             WHERE "{col_b}" IS NOT NULL
         )
         SELECT
-            (SELECT COUNT(*) FROM a_vals) AS total_a,
-            (SELECT COUNT(*) FROM b_vals) AS total_b,
-            (SELECT COUNT(*) FROM a_vals WHERE v IN (SELECT v FROM b_vals)) AS overlap
+            (SELECT COUNT(*) FROM a_vals WHERE v IS NOT NULL) AS total_a,
+            (SELECT COUNT(*) FROM b_vals WHERE v IS NOT NULL) AS total_b,
+            (SELECT COUNT(*) FROM a_vals
+             WHERE v IS NOT NULL AND v IN (SELECT v FROM b_vals WHERE v IS NOT NULL)) AS overlap
     """
     rows = execute_query(sql)
     if not rows:

@@ -13,21 +13,24 @@ export function useMetadata(modelId) {
   // Flatten datasets' dimensions and measures into top-level arrays
   // so FieldManager/FilterManager can access metadata.dimensions / metadata.measures.
   // Each field is tagged with _dataset_name for grouping in the picker.
+  //
+  // Dimensions are kept per-dataset (composite key ds_id:field) so users can
+  // pick columns from every table even when canonical names overlap. Measures
+  // still dedup by field name since same-named measures represent the same
+  // aggregation.
   const data = useMemo(() => {
     if (!query.data) return undefined;
     const raw = query.data;
     const datasets = raw.datasets || [];
 
-    const dimMap = new Map();
+    const dims = [];
     const measMap = new Map();
-    // Build a field→dataset_id lookup so pivot knows which dataset owns each field.
-    // First-seen wins (matches dimMap/measMap dedup logic).
     const fieldDatasetMap = {};
     for (const ds of datasets) {
       const dsName = ds.name || ds.id;
       for (const d of (ds.dimensions || [])) {
-        if (!dimMap.has(d.field)) {
-          dimMap.set(d.field, { ...d, _dataset_name: dsName, _dataset_id: ds.id });
+        dims.push({ ...d, _dataset_name: dsName, _dataset_id: ds.id });
+        if (!(d.field in fieldDatasetMap)) {
           fieldDatasetMap[d.field] = ds.id;
         }
       }
@@ -41,7 +44,7 @@ export function useMetadata(modelId) {
 
     return {
       ...raw,
-      dimensions: Array.from(dimMap.values()),
+      dimensions: dims,
       measures: Array.from(measMap.values()),
       fieldDatasetMap,
     };

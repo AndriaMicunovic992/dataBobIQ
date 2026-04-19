@@ -201,12 +201,43 @@ def _build_join_clauses(
 
         # Determine join columns
         if rel.source_dataset_id == dataset_id:
-            fact_col = _quote(rel.source_column)
-            lookup_col = _quote(rel.target_column)
+            fact_col_name = rel.source_column
+            lookup_col_name = rel.target_column
         else:
-            fact_col = _quote(rel.target_column)
-            lookup_col = _quote(rel.source_column)
+            fact_col_name = rel.target_column
+            lookup_col_name = rel.source_column
 
+        # Validate join columns exist in their respective views
+        try:
+            fact_cols = {r["column_name"] for r in execute_query(
+                f"SELECT column_name FROM (DESCRIBE {fact_view})"
+            )}
+            target_cols = {r["column_name"] for r in execute_query(
+                f"SELECT column_name FROM (DESCRIBE {target_view})"
+            )}
+        except Exception:
+            logger.warning(
+                "Could not validate join columns for %s ↔ %s",
+                fact_view, target_view, exc_info=True,
+            )
+            fact_cols = set()
+            target_cols = set()
+
+        if fact_cols and fact_col_name not in fact_cols:
+            logger.warning(
+                "Join column '%s' not found in fact view %s (available: %s). Skipping join.",
+                fact_col_name, fact_view, sorted(fact_cols)[:10],
+            )
+            continue
+        if target_cols and lookup_col_name not in target_cols:
+            logger.warning(
+                "Join column '%s' not found in target view %s. Skipping join.",
+                lookup_col_name, target_view,
+            )
+            continue
+
+        fact_col = _quote(fact_col_name)
+        lookup_col = _quote(lookup_col_name)
         join_parts.append(
             f"LEFT JOIN {target_view} AS {alias} ON f.{fact_col} = {alias}.{lookup_col}"
         )

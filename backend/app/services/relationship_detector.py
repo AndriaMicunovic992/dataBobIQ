@@ -45,10 +45,10 @@ def detect_relationships(
     results: list[dict[str, Any]] = []
     new_view = view_name_for(new_dataset_id)
 
-    # Only consider dimension/key columns (not measures)
+    # Only consider key columns for relationship detection
     new_dim_cols = [
         c for c in new_columns
-        if c.get("column_role") in ("attribute", "key", "time")
+        if c.get("column_role") == "key"
         and c.get("data_type") not in ("numeric", "currency")
     ]
 
@@ -59,7 +59,7 @@ def detect_relationships(
 
         other_dim_cols = [
             c for c in other_cols
-            if c.get("column_role") in ("attribute", "key", "time")
+            if c.get("column_role") == "key"
             and c.get("data_type") not in ("numeric", "currency")
         ]
 

@@ -78,8 +78,32 @@ def _detect_currency(col_name: str, series: pl.Series) -> bool:
     return any(t in lower for t in currency_tokens) and isinstance(series.dtype, _NUMERIC_DTYPES)
 
 
+def _dedupe_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Rename duplicate column headers with numeric suffixes.
+
+    Excel/CSV files sometimes ship with two columns sharing the same header
+    (e.g. two 'cost_center' columns). Polars accepts this at read time but
+    raises DuplicateError on any subsequent select(). Rename the 2nd, 3rd,
+    ... occurrence as '<name>_2', '<name>_3', ... so every column is unique.
+    """
+    seen: dict[str, int] = {}
+    new_names: list[str] = []
+    for col in df.columns:
+        n = seen.get(col, 0) + 1
+        seen[col] = n
+        new_names.append(col if n == 1 else f"{col}_{n}")
+    if new_names != list(df.columns):
+        logger.warning(
+            "Renamed duplicate columns: %s",
+            [(o, n) for o, n in zip(df.columns, new_names) if o != n],
+        )
+        df.columns = new_names
+    return df
+
+
 def _normalize_schema(df: pl.DataFrame) -> pl.DataFrame:
     """Replace Utf8View and other non-standard dtypes with canonical equivalents."""
+    df = _dedupe_columns(df)
     casts: list[pl.Expr] = []
     for col_name, dtype in zip(df.columns, df.dtypes):
         dtype_str = str(dtype)

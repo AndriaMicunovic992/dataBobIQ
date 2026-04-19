@@ -256,6 +256,11 @@ def parse_file(
 
     total_rows = len(df)
     logger.info("Parsed %d rows × %d columns", total_rows, len(df.columns))
+    logger.info(
+        "Detected schema for %s: %s",
+        path.name,
+        {c: str(dt) for c, dt in zip(df.columns, df.dtypes)},
+    )
 
     column_metadata: list[dict] = []
     for col_name in df.columns:
@@ -272,6 +277,12 @@ def parse_file(
         # Override: if data_type is currency, force measure
         if data_type == "currency":
             column_role = "measure"
+
+        logger.debug(
+            "  col='%s' polars_dtype=%s → data_type=%s role=%s (unique=%d, samples=%s)",
+            col_name, dtype, data_type, column_role, unique_count,
+            _sample_values(series, n=3),
+        )
 
         display_name = col_name.replace("_", " ").strip().title()
 

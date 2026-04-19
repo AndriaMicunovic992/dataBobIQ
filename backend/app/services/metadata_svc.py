@@ -21,11 +21,6 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
     For each active dataset, queries DuckDB for:
     - Dimension columns: distinct values (capped at _MAX_DISTINCT_VALUES)
     - Measure columns: min, max, sum stats
-
-    When the same canonical_name is claimed by columns in multiple datasets
-    (legacy state from before cross-dataset dedup), only the earliest-created
-    dataset's claim is surfaced as a dimension/measure — later datasets'
-    duplicate columns are hidden from the picker so users see a clean list.
     """
     from app.models.metadata import Dataset, DatasetColumn, KPIDefinition, Scenario
 
@@ -54,13 +49,6 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
 
     dataset_metas: list[DatasetMetadata] = []
 
-    # Track canonical names already surfaced, so that when two datasets both
-    # claim the same canonical name (legacy mess from before dedup), only the
-    # earliest-created dataset's column appears in the picker. The underlying
-    # parquet column still exists on disk for both datasets — we just don't
-    # double-list it.
-    claimed_field_names: set[str] = set()
-
     for dataset in datasets:
         # Ensure DuckDB view is registered for this dataset
         if dataset.id not in _registered_datasets and dataset.parquet_path:
@@ -82,14 +70,6 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
 
         for col in dim_cols:
             col_name = col.canonical_name or col.source_name
-            # Skip if this canonical name was already claimed by an earlier
-            # dataset — prevents duplicate entries in the field picker.
-            if col.canonical_name and col_name in claimed_field_names:
-                logger.info(
-                    "Hiding duplicate dim '%s' from dataset %s (already claimed)",
-                    col_name, dataset.id[:8],
-                )
-                continue
             try:
                 val_rows = execute_query(
                     f'SELECT DISTINCT "{col_name}" AS v FROM {view_name} '
@@ -112,17 +92,9 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
                 cardinality=cardinality,
                 values=values,
             ))
-            if col.canonical_name:
-                claimed_field_names.add(col_name)
 
         for col in measure_cols:
             col_name = col.canonical_name or col.source_name
-            if col.canonical_name and col_name in claimed_field_names:
-                logger.info(
-                    "Hiding duplicate measure '%s' from dataset %s (already claimed)",
-                    col_name, dataset.id[:8],
-                )
-                continue
             stats: dict[str, Any] | None = None
             try:
                 stat_rows = execute_query(
@@ -147,8 +119,6 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
                 type=col.data_type,
                 stats=stats,
             ))
-            if col.canonical_name:
-                claimed_field_names.add(col_name)
 
         dataset_metas.append(DatasetMetadata(
             id=dataset.id,

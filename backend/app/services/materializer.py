@@ -98,12 +98,13 @@ def _cast_columns(df: pl.DataFrame, column_meta: list[dict]) -> pl.DataFrame:
     """Cast columns to their declared types based on metadata."""
     cast_exprs: list[pl.Expr] = []
     col_set = set(df.columns)
+    seen: set[str] = set()
 
     for meta in column_meta:
-        # Use canonical_name if mapped, otherwise source_name
         col_name = meta.get("canonical_name") or meta.get("source_name", "")
-        if col_name not in col_set:
+        if col_name not in col_set or col_name in seen:
             continue
+        seen.add(col_name)
         data_type = meta.get("data_type", "text")
         target_dtype = _TYPE_CAST_MAP.get(data_type)
         if target_dtype:
@@ -116,9 +117,8 @@ def _cast_columns(df: pl.DataFrame, column_meta: list[dict]) -> pl.DataFrame:
             cast_exprs.append(pl.col(col_name))
 
     # Include remaining columns that weren't in metadata
-    meta_names = {m.get("canonical_name") or m.get("source_name", "") for m in column_meta}
     for col in df.columns:
-        if col not in meta_names:
+        if col not in seen:
             cast_exprs.append(pl.col(col))
 
     return df.select(cast_exprs)

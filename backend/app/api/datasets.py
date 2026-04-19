@@ -79,12 +79,17 @@ async def upload_dataset(
         sheet_names = list_excel_sheets(str(dest_path))
         if not sheet_names:
             # Enumeration failed — fall back to default sheet.
+            logger.warning("No sheets enumerated for %s; falling back to default", dest_path)
             sheet_names = [None]
     else:
         sheet_names = [None]
 
     multi = sum(1 for s in sheet_names if s is not None) > 1
     base_name = Path(safe_filename).stem or safe_filename
+    logger.info(
+        "Creating %d dataset(s) for %s; multi=%s sheets=%s",
+        len(sheet_names), safe_filename, multi, sheet_names,
+    )
 
     created: list[Dataset] = []
     for sheet in sheet_names:

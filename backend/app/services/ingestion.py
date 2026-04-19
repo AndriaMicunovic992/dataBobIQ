@@ -72,8 +72,33 @@ async def _save_columns(dataset_id: str, columns: list[dict]) -> None:
         logger.info("Verified %d columns saved for dataset %s", len(saved), dataset_id)
 
 
+def _build_schema_role_map(fact_type_id: str | None) -> dict[str, str]:
+    """Return {canonical_name: column_role} from the fact type definition.
+
+    Dimensions with a shared_dim get role "key" (they are join keys).
+    Other dimensions get "attribute". Measures get "measure".
+    """
+    if not fact_type_id:
+        return {}
+    from app.fact_types.registry import get_fact_type
+    ft = get_fact_type(fact_type_id)
+    if not ft:
+        return {}
+    roles: dict[str, str] = {}
+    for col_def in ft.core_dimensions + ft.expected_dimensions:
+        roles[col_def.name] = "key" if col_def.shared_dim else "attribute"
+    for col_def in ft.core_measures + ft.expected_measures:
+        roles[col_def.name] = "measure"
+    return roles
+
+
 async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
-    """Persist AI mapping config to dataset record and update column canonical names."""
+    """Persist AI mapping config to dataset record and update column canonical names.
+
+    Also updates column_role when a column is mapped to a canonical schema
+    field whose role is known (e.g. dimensions become "key", measures become
+    "measure").
+    """
     from sqlalchemy import select
 
     from app.models.metadata import Dataset, DatasetColumn
@@ -85,12 +110,13 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
             dataset.mapping_config = mapping_config
             dataset.ai_analyzed = True
 
+            # Build a lookup: canonical_name → role from the fact type schema.
+            schema_roles = _build_schema_role_map(dataset.fact_type)
+
             # Apply AI-suggested canonical names to DatasetColumn records.
             # Deduplicate by canonical name within the whole model: each
             # canonical name can only be claimed by ONE source column in
-            # the entire model. The highest-confidence candidate wins
-            # within this dataset; canonical names already claimed by
-            # another dataset in the same model are skipped entirely.
+            # the entire model.
             mappings = mapping_config.get("mappings", [])
             if mappings:
                 col_result = await db.execute(
@@ -129,7 +155,17 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
                             )
                             continue
                         claimed_targets.add(tgt)
-                        col_by_source[src].canonical_name = tgt
+                        col = col_by_source[src]
+                        col.canonical_name = tgt
+                        # Update role to match the canonical schema
+                        if tgt in schema_roles:
+                            old_role = col.column_role
+                            col.column_role = schema_roles[tgt]
+                            if old_role != col.column_role:
+                                logger.info(
+                                    "Updated column_role for '%s' (%s): %s → %s",
+                                    src, tgt, old_role, col.column_role,
+                                )
 
             await db.commit()
 

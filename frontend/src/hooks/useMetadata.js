@@ -42,9 +42,22 @@ export function useMetadata(modelId) {
       }
     }
 
+    // Disambiguate dimension labels when the same field name appears
+    // from multiple datasets — append "(DatasetName)" to the label.
+    const dimFieldCount = new Map();
+    for (const d of dims) {
+      dimFieldCount.set(d.field, (dimFieldCount.get(d.field) || 0) + 1);
+    }
+    const disambiguatedDims = dims.map((d) => {
+      if (dimFieldCount.get(d.field) > 1 && d._dataset_name) {
+        return { ...d, label: `${d.label || d.field} (${d._dataset_name})` };
+      }
+      return d;
+    });
+
     return {
       ...raw,
-      dimensions: dims,
+      dimensions: disambiguatedDims,
       measures: Array.from(measMap.values()),
       fieldDatasetMap,
     };

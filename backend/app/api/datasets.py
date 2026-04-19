@@ -291,6 +291,35 @@ async def update_column(
         raise HTTPException(status_code=404, detail=f"Column {column_id} not found")
 
     update_data = body.model_dump(exclude_unset=True)
+
+    # Enforce model-level uniqueness of canonical_name: if the user sets a
+    # canonical name that's already claimed by another column in the same
+    # model, reject the request.
+    new_canonical = update_data.get("canonical_name")
+    if new_canonical:
+        ds_for_check = (await db.execute(
+            select(Dataset).where(Dataset.id == dataset_id)
+        )).scalar_one_or_none()
+        if ds_for_check and ds_for_check.model_id:
+            conflict = (await db.execute(
+                select(DatasetColumn)
+                .join(Dataset, DatasetColumn.dataset_id == Dataset.id)
+                .where(
+                    Dataset.model_id == ds_for_check.model_id,
+                    DatasetColumn.canonical_name == new_canonical,
+                    DatasetColumn.id != column_id,
+                )
+            )).scalar_one_or_none()
+            if conflict:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Canonical name '{new_canonical}' is already used by "
+                        f"column '{conflict.source_name}' in this model. "
+                        f"Unmap that column first."
+                    ),
+                )
+
     for field, value in update_data.items():
         setattr(column, field, value)
 

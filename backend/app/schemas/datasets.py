@@ -30,6 +30,7 @@ class DatasetResponse(BaseModel):
     model_id: str | None = None
     name: str
     source_filename: str | None = None
+    sheet_name: str | None = None
     fact_type: str
     row_count: int
     status: str

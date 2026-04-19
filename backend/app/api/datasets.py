@@ -15,15 +15,19 @@ from app.duckdb_engine import unregister_dataset
 from app.models.metadata import Dataset, DatasetColumn, DatasetRelationship, Model
 from app.schemas.datasets import DatasetColumnUpdate, DatasetResponse, RelationshipCreate, RelationshipResponse, RelationshipUpdate
 from app.services.ingestion import confirm_mapping_and_materialize, process_upload
+from app.services.parser import list_excel_sheets
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["datasets"])
 
 
+_EXCEL_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".xlsb", ".ods")
+
+
 @router.post(
     "/models/{model_id}/datasets/upload",
-    response_model=DatasetResponse,
+    response_model=list[DatasetResponse],
     status_code=202,
 )
 async def upload_dataset(
@@ -31,8 +35,12 @@ async def upload_dataset(
     file: UploadFile,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-) -> DatasetResponse:
-    """Upload a file, persist it to disk, create a dataset record, and kick off ingestion."""
+) -> list[DatasetResponse]:
+    """Upload a file and kick off ingestion.
+
+    Excel workbooks produce one Dataset per sheet. CSV/TSV produce a single
+    Dataset. Returns the list of created datasets (always length >= 1).
+    """
     # Verify model exists
     result = await db.execute(select(Model).where(Model.id == model_id))
     model = result.scalar_one_or_none()
@@ -42,18 +50,20 @@ async def upload_dataset(
     if not file.filename:
         raise HTTPException(status_code=422, detail="Filename is required")
 
-    dataset_id = str(uuid.uuid4())
     safe_filename = Path(file.filename).name
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    dest_path = upload_dir / f"{dataset_id}_{safe_filename}"
+
+    # Save the file once with a per-upload prefix so all sibling sheet
+    # datasets can share the same physical file.
+    upload_id = str(uuid.uuid4())
+    dest_path = upload_dir / f"{upload_id}_{safe_filename}"
 
     try:
         contents = await file.read()
         dest_path.write_bytes(contents)
         logger.info(
-            "Saved upload dataset_id=%s path=%s bytes=%d",
-            dataset_id,
+            "Saved upload path=%s bytes=%d",
             dest_path,
             len(contents),
         )
@@ -61,37 +71,69 @@ async def upload_dataset(
         logger.exception("Failed to save uploaded file: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to save uploaded file") from exc
 
-    dataset = Dataset(
-        id=dataset_id,
-        model_id=model_id,
-        name=safe_filename,
-        source_filename=safe_filename,
-        fact_type="unknown",
-        row_count=0,
-        status="queued",
-        data_layer="actuals",
-        ai_analyzed=False,
-    )
-    db.add(dataset)
+    # Decide which sheets to ingest. For Excel, enumerate sheets and create
+    # one dataset per sheet. Non-Excel uploads get a single dataset with
+    # sheet_name=None.
+    suffix = Path(safe_filename).suffix.lower()
+    if suffix in _EXCEL_SUFFIXES:
+        sheet_names = list_excel_sheets(str(dest_path))
+        if not sheet_names:
+            # Enumeration failed — fall back to default sheet.
+            sheet_names = [None]
+    else:
+        sheet_names = [None]
+
+    multi = sum(1 for s in sheet_names if s is not None) > 1
+    base_name = Path(safe_filename).stem or safe_filename
+
+    created: list[Dataset] = []
+    for sheet in sheet_names:
+        dataset_id = str(uuid.uuid4())
+        if sheet is None:
+            ds_name = safe_filename
+        else:
+            ds_name = f"{base_name} \u2014 {sheet}" if multi else base_name
+        dataset = Dataset(
+            id=dataset_id,
+            model_id=model_id,
+            name=ds_name,
+            source_filename=safe_filename,
+            sheet_name=sheet,
+            source_file_path=str(dest_path),
+            fact_type="unknown",
+            row_count=0,
+            status="queued",
+            data_layer="actuals",
+            ai_analyzed=False,
+        )
+        db.add(dataset)
+        created.append(dataset)
+
     await db.commit()
-    await db.refresh(dataset)
+    for ds in created:
+        await db.refresh(ds)
 
-    background_tasks.add_task(
-        process_upload,
-        model_id=model_id,
-        dataset_id=dataset_id,
-        file_path=str(dest_path),
+    for ds in created:
+        background_tasks.add_task(
+            process_upload,
+            model_id=model_id,
+            dataset_id=ds.id,
+            file_path=str(dest_path),
+            sheet_name=ds.sheet_name,
+        )
+    logger.info(
+        "Queued ingestion for %d dataset(s) from %s", len(created), safe_filename
     )
-    logger.info("Queued ingestion for dataset_id=%s", dataset_id)
 
-    # Reload with columns relationship (empty at this point)
+    # Reload with columns relationship (empty at this point) in original order.
+    ids = [ds.id for ds in created]
     result = await db.execute(
         select(Dataset)
         .options(selectinload(Dataset.columns))
-        .where(Dataset.id == dataset_id)
+        .where(Dataset.id.in_(ids))
     )
-    dataset = result.unique().scalar_one()
-    return DatasetResponse.model_validate(dataset)
+    by_id = {d.id: d for d in result.unique().scalars().all()}
+    return [DatasetResponse.model_validate(by_id[i]) for i in ids]
 
 
 @router.get("/models/{model_id}/datasets", response_model=list[DatasetResponse])

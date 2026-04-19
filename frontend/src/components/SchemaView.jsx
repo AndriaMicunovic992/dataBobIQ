@@ -107,7 +107,7 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: spacing.sm, flexWrap: 'wrap' }}>
             <span style={{ fontWeight: typography.fontWeights.semibold, color: colors.textPrimary, fontFamily: typography.fontFamily, fontSize: typography.fontSizes.md }}>
-              {dataset.source_filename || dataset.name}
+              {dataset.name || dataset.source_filename}
             </span>
             <StatusBadge status={dataset.status || 'pending'} />
             <Badge variant={dataset.data_layer === 'actuals' ? 'primary' : dataset.data_layer === 'budget' ? 'info' : 'warning'}>
@@ -141,7 +141,7 @@ function DatasetCard({ dataset, onDelete, expanded, onToggle }) {
             loading={deleteMut.isPending}
             onClick={(e) => {
               e.stopPropagation();
-              if (confirm(`Delete "${dataset.source_filename}"?`)) deleteMut.mutate();
+              if (confirm(`Delete "${dataset.name || dataset.source_filename}"?`)) deleteMut.mutate();
             }}
           >
             Delete
@@ -236,7 +236,7 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
     }}>
       <select style={selectStyle} value={form.source_dataset_id}
         onChange={(e) => setForm((f) => ({ ...f, source_dataset_id: e.target.value, source_column: '' }))}>
-        {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.source_filename || ds.name}</option>)}
+        {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.name || ds.source_filename}</option>)}
       </select>
       <select style={selectStyle} value={form.source_column}
         onChange={(e) => setForm((f) => ({ ...f, source_column: e.target.value }))}>
@@ -250,7 +250,7 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
       </select>
       <select style={selectStyle} value={form.target_dataset_id}
         onChange={(e) => setForm((f) => ({ ...f, target_dataset_id: e.target.value, target_column: '' }))}>
-        {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.source_filename || ds.name}</option>)}
+        {datasets.map((ds) => <option key={ds.id} value={ds.id}>{ds.name || ds.source_filename}</option>)}
       </select>
       <select style={selectStyle} value={form.target_column}
         onChange={(e) => setForm((f) => ({ ...f, target_column: e.target.value }))}>
@@ -302,7 +302,7 @@ function RelationshipsPanel({ modelId, datasets }) {
 
   const dsNameMap = {};
   for (const ds of datasets) {
-    dsNameMap[ds.id] = ds.source_filename || ds.name;
+    dsNameMap[ds.id] = ds.name || ds.source_filename;
   }
 
   return (

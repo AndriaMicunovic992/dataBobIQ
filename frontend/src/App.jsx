@@ -563,7 +563,6 @@ export default function App() {
         <AgentWorkspace
           modelId={selectedModelId}
           dashboards={dashboards}
-          onExit={() => setActiveTab(dashboards?.[0] ? `dashboard-${dashboards[0].id}` : 'schema')}
           onOpenDashboard={(dashboardId, scenarioId) => {
             if (!dashboardId) return;
             if (scenarioId) {

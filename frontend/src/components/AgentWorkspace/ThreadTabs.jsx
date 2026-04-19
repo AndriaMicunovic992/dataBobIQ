@@ -107,7 +107,7 @@ function Tab({ tab, active, onClick, onClose, onRename }) {
   );
 }
 
-export default function ThreadTabs({ tabs, activeId, onSelect, onClose, onRename, onExit }) {
+export default function ThreadTabs({ tabs, activeId, onSelect, onClose, onRename }) {
   return (
     <div style={{
       display: 'flex', alignItems: 'stretch',
@@ -129,26 +129,6 @@ export default function ThreadTabs({ tabs, activeId, onSelect, onClose, onRename
           />
         ))}
       </div>
-      {onExit && (
-        <button
-          onClick={onExit}
-          title="Close workspace"
-          style={{
-            background: 'none', border: 'none',
-            color: colors.textSecondary,
-            cursor: 'pointer',
-            padding: `0 ${spacing.md}px`,
-            fontSize: typography.fontSizes.sm,
-            fontFamily: typography.fontFamily,
-            fontWeight: typography.fontWeights.medium,
-            flexShrink: 0,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = colors.textPrimary; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textSecondary; }}
-        >
-          ✕ Exit
-        </button>
-      )}
     </div>
   );
 }

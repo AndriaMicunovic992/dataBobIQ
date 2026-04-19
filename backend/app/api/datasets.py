@@ -92,7 +92,7 @@ async def upload_dataset(
         if sheet is None:
             ds_name = safe_filename
         else:
-            ds_name = f"{base_name} \u2014 {sheet}" if multi else base_name
+            ds_name = sheet if multi else safe_filename
         dataset = Dataset(
             id=dataset_id,
             model_id=model_id,

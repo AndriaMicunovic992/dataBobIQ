@@ -104,7 +104,59 @@ def _sample_values(series: pl.Series, n: int = _SAMPLE_SIZE) -> list[Any]:
     return [v.isoformat() if hasattr(v, 'isoformat') else str(v) if not isinstance(v, (int, float, str, bool)) else v for v in taken]
 
 
-def parse_file(file_path: str) -> tuple[pl.DataFrame, list[dict]]:
+_EXCEL_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".xlsb", ".ods")
+
+
+def list_excel_sheets(file_path: str) -> list[str]:
+    """Return the ordered list of sheet names in an Excel workbook.
+
+    Returns an empty list for non-Excel files, or when no engine can read the
+    workbook. Callers can then fall back to single-dataset behaviour.
+    """
+    path = Path(file_path)
+    if path.suffix.lower() not in _EXCEL_SUFFIXES:
+        return []
+
+    # fastexcel (calamine binding) enumerates sheets without loading data.
+    try:
+        import fastexcel
+
+        reader = fastexcel.read_excel(str(path))
+        names = list(reader.sheet_names)
+        if names:
+            return names
+    except Exception as exc:  # pragma: no cover - runtime-dep dependent
+        logger.warning("fastexcel sheet enumeration failed for %s: %s", file_path, exc)
+
+    # Fallback: openpyxl read-only mode for .xlsx.
+    try:
+        from openpyxl import load_workbook
+
+        wb = load_workbook(str(path), read_only=True, data_only=True)
+        try:
+            names = list(wb.sheetnames)
+            if names:
+                return names
+        finally:
+            wb.close()
+    except Exception as exc:  # pragma: no cover
+        logger.warning("openpyxl sheet enumeration failed for %s: %s", file_path, exc)
+
+    # Last resort: ask Polars to load every sheet (expensive but reliable).
+    try:
+        data = pl.read_excel(str(path), engine="calamine", sheet_id=0, infer_schema_length=0)
+        if isinstance(data, dict):
+            return list(data.keys())
+    except Exception as exc:
+        logger.warning("polars sheet enumeration failed for %s: %s", file_path, exc)
+
+    return []
+
+
+def parse_file(
+    file_path: str,
+    sheet_name: str | None = None,
+) -> tuple[pl.DataFrame, list[dict]]:
     """Parse xlsx/csv into DataFrame + column metadata list.
 
     Column metadata items::
@@ -118,6 +170,9 @@ def parse_file(file_path: str) -> tuple[pl.DataFrame, list[dict]]:
             sample_values: list,
         }
 
+    When ``sheet_name`` is given (Excel only) that sheet is read; otherwise the
+    first sheet is used. CSV/TSV inputs ignore ``sheet_name``.
+
     Uses calamine engine for Excel. Detects types via Polars dtype inspection.
     Normalises Utf8View → String before processing.
     """
@@ -126,22 +181,19 @@ def parse_file(file_path: str) -> tuple[pl.DataFrame, list[dict]]:
         raise FileNotFoundError(f"File not found: {file_path}")
 
     suffix = path.suffix.lower()
-    logger.info("Parsing file %s (type=%s)", file_path, suffix)
+    logger.info(
+        "Parsing file %s (type=%s sheet=%s)", file_path, suffix, sheet_name or "<default>"
+    )
 
-    if suffix in (".xlsx", ".xls", ".xlsm", ".xlsb", ".ods"):
+    if suffix in _EXCEL_SUFFIXES:
+        kwargs: dict[str, Any] = {"infer_schema_length": 1000}
+        if sheet_name:
+            kwargs["sheet_name"] = sheet_name
         try:
-            df = pl.read_excel(
-                file_path,
-                engine="calamine",
-                infer_schema_length=1000,
-            )
+            df = pl.read_excel(file_path, engine="calamine", **kwargs)
         except Exception:
             logger.warning("calamine failed, falling back to openpyxl for %s", file_path)
-            df = pl.read_excel(
-                file_path,
-                engine="openpyxl",
-                infer_schema_length=1000,
-            )
+            df = pl.read_excel(file_path, engine="openpyxl", **kwargs)
     elif suffix == ".csv":
         df = pl.read_csv(
             file_path,

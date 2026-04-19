@@ -102,19 +102,27 @@ async def _save_mapping_config(dataset_id: str, mapping_config: dict) -> None:
             await db.commit()
 
 
-async def process_upload(model_id: str, dataset_id: str, file_path: str) -> None:
+async def process_upload(
+    model_id: str,
+    dataset_id: str,
+    file_path: str,
+    sheet_name: str | None = None,
+) -> None:
     """Background task: parse → classify → AI map → save mapping for review.
 
     Status progression:
         queued → parsing → parsed → mapping → mapped_pending_review
         On error: → error (with ai_notes set)
     """
-    logger.info("Starting ingestion pipeline for dataset %s (model %s)", dataset_id, model_id)
+    logger.info(
+        "Starting ingestion pipeline for dataset %s (model %s sheet=%s)",
+        dataset_id, model_id, sheet_name or "<default>",
+    )
 
     try:
         # ---- 1. Parse ----
         await _update_dataset_status(dataset_id, "parsing")
-        df, columns = parse_file(file_path)
+        df, columns = parse_file(file_path, sheet_name=sheet_name)
         row_count = len(df)
         logger.info("Parsed %d rows, %d columns for dataset %s", row_count, len(columns), dataset_id)
         await _update_dataset_status(dataset_id, "parsed", {"row_count": row_count})
@@ -228,6 +236,8 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
 
             model_id = dataset.model_id
             data_layer = dataset.data_layer or "actuals"
+            sheet_name = dataset.sheet_name
+            source_file_path = dataset.source_file_path
 
             # Load columns for type casting
             col_result = await db.execute(
@@ -252,21 +262,27 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
         data_dir = settings.data_dir
         ensure_data_dirs(data_dir, model_id)
 
-        # Re-parse the original file to get the raw DataFrame
-        upload_dir = settings.upload_dir
+        # Re-parse the original file to get the raw DataFrame.
         import os
-        # Find the uploaded file by scanning uploads dir for dataset_id prefix
+
+        upload_dir = settings.upload_dir
         raw_path: str | None = None
-        for fname in os.listdir(upload_dir):
-            if fname.startswith(dataset_id):
-                raw_path = os.path.join(upload_dir, fname)
-                break
+        if source_file_path and os.path.exists(source_file_path):
+            raw_path = source_file_path
+        else:
+            # Legacy fallback: scan uploads dir for a file whose name starts
+            # with the dataset_id (pre-multi-sheet datasets were stored this
+            # way).
+            for fname in os.listdir(upload_dir):
+                if fname.startswith(dataset_id):
+                    raw_path = os.path.join(upload_dir, fname)
+                    break
 
         if raw_path is None:
             raise FileNotFoundError(f"Uploaded file not found for dataset {dataset_id}")
 
         from app.services.parser import parse_file as parse
-        df, _ = parse(raw_path)
+        df, _ = parse(raw_path, sheet_name=sheet_name)
 
         # Materialize
         parquet_path = materialize_to_parquet(

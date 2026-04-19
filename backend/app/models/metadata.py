@@ -82,6 +82,13 @@ class Dataset(Base):
     )
     name: str = Column(String(255), nullable=False)
     source_filename: str | None = Column(String(512), nullable=True)
+    # Name of the Excel sheet this dataset was read from. NULL for CSV/TSV
+    # uploads and for legacy Excel uploads that predate multi-sheet support.
+    sheet_name: str | None = Column(String(255), nullable=True)
+    # Path on disk to the originally-uploaded file. When NULL, callers should
+    # fall back to scanning the upload dir for a file prefixed with the
+    # dataset id (legacy behaviour).
+    source_file_path: str | None = Column(String(1024), nullable=True)
     fact_type: str = Column(String(100), nullable=False, default="financial_transactions")
     mapping_config: dict[str, Any] | None = Column(JSONB, nullable=True)
     parquet_path: str | None = Column(String(512), nullable=True)

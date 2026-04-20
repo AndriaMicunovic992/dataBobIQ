@@ -203,8 +203,9 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
 
   const dsColMap = {};
   for (const ds of datasets) {
-    // Collect all unique column names (canonical preferred, fallback to source)
-    // Include both so date/time columns are always visible
+    // Use the name that exists in the DuckDB view: canonical_name if mapped,
+    // else source_name. Never offer source_name as a separate option when the
+    // column was renamed during materialization — the view only has one name.
     const seen = new Set();
     const cols = [];
     for (const c of (ds.columns || [])) {
@@ -212,11 +213,6 @@ function RelationshipForm({ datasets, initial, onSave, onCancel, saving }) {
       if (!seen.has(name)) {
         seen.add(name);
         cols.push({ name, type: c.data_type, role: c.column_role, source: c.source_name });
-      }
-      // Also include source_name if it differs (ensures original names are available)
-      if (c.canonical_name && c.source_name && c.canonical_name !== c.source_name && !seen.has(c.source_name)) {
-        seen.add(c.source_name);
-        cols.push({ name: c.source_name, type: c.data_type, role: c.column_role, source: c.source_name });
       }
     }
     dsColMap[ds.id] = cols;

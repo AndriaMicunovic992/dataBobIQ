@@ -22,6 +22,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["datasets"])
 
 
+async def _resolve_view_column_name(
+    db: AsyncSession, dataset_id: str, column_name: str
+) -> str:
+    """Resolve a user-provided column name to the name that exists in DuckDB.
+
+    The DuckDB view uses canonical_name (if the column was AI-mapped) or
+    source_name. If the user submits a source_name that has been renamed,
+    translate it to the canonical name so the JOIN works.
+    """
+    result = await db.execute(
+        select(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id)
+    )
+    cols = result.scalars().all()
+
+    # Direct match: user submitted the view name already (canonical_name or
+    # an unmapped source_name).
+    for c in cols:
+        view_name = c.canonical_name or c.source_name
+        if view_name == column_name:
+            return view_name
+
+    # Fallback: user submitted a source_name that was renamed to a canonical.
+    for c in cols:
+        if c.source_name == column_name and c.canonical_name:
+            logger.info(
+                "Resolved column '%s' → '%s' (canonical) for dataset %s",
+                column_name, c.canonical_name, dataset_id,
+            )
+            return c.canonical_name
+
+    # No match found — return as-is and let downstream validation raise.
+    return column_name
+
+
 _EXCEL_SUFFIXES = (".xlsx", ".xls", ".xlsm", ".xlsb", ".ods")
 
 
@@ -397,13 +431,22 @@ async def create_relationship(
     if result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail=f"Model {model_id} not found")
 
+    # Resolve source_name → canonical_name so the relationship references the
+    # column names that actually exist in the DuckDB views.
+    source_col = await _resolve_view_column_name(
+        db, body.source_dataset_id, body.source_column
+    )
+    target_col = await _resolve_view_column_name(
+        db, body.target_dataset_id, body.target_column
+    )
+
     rel = DatasetRelationship(
         id=str(uuid.uuid4()),
         model_id=model_id,
         source_dataset_id=body.source_dataset_id,
         target_dataset_id=body.target_dataset_id,
-        source_column=body.source_column,
-        target_column=body.target_column,
+        source_column=source_col,
+        target_column=target_col,
         relationship_type=body.relationship_type,
         is_manual=True,
     )
@@ -432,6 +475,19 @@ async def update_relationship(
         raise HTTPException(status_code=404, detail="Relationship not found")
 
     update_data = body.model_dump(exclude_unset=True)
+
+    # Resolve source_name → canonical_name for the side(s) being updated.
+    if "source_column" in update_data:
+        src_ds = update_data.get("source_dataset_id", rel.source_dataset_id)
+        update_data["source_column"] = await _resolve_view_column_name(
+            db, src_ds, update_data["source_column"]
+        )
+    if "target_column" in update_data:
+        tgt_ds = update_data.get("target_dataset_id", rel.target_dataset_id)
+        update_data["target_column"] = await _resolve_view_column_name(
+            db, tgt_ds, update_data["target_column"]
+        )
+
     for field, value in update_data.items():
         setattr(rel, field, value)
 

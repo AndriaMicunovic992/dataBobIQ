@@ -224,17 +224,19 @@ def _build_join_clauses(
             target_cols = set()
 
         if fact_cols and fact_col_name not in fact_cols:
-            logger.warning(
-                "Join column '%s' not found in fact view %s (available: %s). Skipping join.",
-                fact_col_name, fact_view, sorted(fact_cols)[:10],
+            raise ValueError(
+                f"Join column '{fact_col_name}' not found in dataset. "
+                f"Available columns: {sorted(fact_cols)[:10]}. "
+                f"The relationship may reference a renamed column — "
+                f"please delete and recreate the relationship."
             )
-            continue
         if target_cols and lookup_col_name not in target_cols:
-            logger.warning(
-                "Join column '%s' not found in target view %s. Skipping join.",
-                lookup_col_name, target_view,
+            raise ValueError(
+                f"Join column '{lookup_col_name}' not found in target dataset. "
+                f"Available columns: {sorted(target_cols)[:10]}. "
+                f"The relationship may reference a renamed column — "
+                f"please delete and recreate the relationship."
             )
-            continue
 
         fact_col = _quote(fact_col_name)
         lookup_col = _quote(lookup_col_name)

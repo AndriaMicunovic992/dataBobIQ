@@ -148,6 +148,7 @@ class DatasetColumn(Base):
     unique_count: int | None = Column(Integer, nullable=True)
     sample_values: list[Any] | None = Column(JSONB, nullable=True)
     ai_suggestion: dict[str, Any] | None = Column(JSONB, nullable=True)
+    role_source: str = Column(String(50), nullable=False, default="system", server_default="system")
 
     dataset = relationship("Dataset", back_populates="columns")
 

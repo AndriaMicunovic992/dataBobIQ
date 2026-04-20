@@ -21,6 +21,7 @@ class DatasetColumnResponse(BaseModel):
     shared_dim: str | None = None
     unique_count: int | None = None
     sample_values: list[Any] | None = None
+    role_source: str = "system"
 
     model_config = ConfigDict(from_attributes=True)
 

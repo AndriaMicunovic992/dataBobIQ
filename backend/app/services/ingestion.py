@@ -320,6 +320,7 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
                     "data_type": c.data_type,
                     "column_role": c.column_role,
                     "shared_dim": c.shared_dim,
+                    "unique_count": c.unique_count,
                 }
                 for c in db_columns
             ]
@@ -465,6 +466,7 @@ async def _detect_and_save_relationships(
                         "canonical_name": c.canonical_name,
                         "column_role": c.column_role,
                         "data_type": c.data_type,
+                        "unique_count": c.unique_count,
                     }
                     for c in cols
                 ],
@@ -473,20 +475,53 @@ async def _detect_and_save_relationships(
         # Run detection
         relationships = detect_relationships(dataset_id, column_meta, other_datasets)
 
-        if not relationships:
-            logger.info("No relationships detected for dataset %s", dataset_id)
-            return
-
-        # Remove old relationships involving this dataset
+        # Remove only AUTO-detected relationships involving this dataset;
+        # manual relationships created by the user are preserved.
         await db.execute(
             delete(DatasetRelationship).where(
-                (DatasetRelationship.source_dataset_id == dataset_id)
-                | (DatasetRelationship.target_dataset_id == dataset_id)
+                (
+                    (DatasetRelationship.source_dataset_id == dataset_id)
+                    | (DatasetRelationship.target_dataset_id == dataset_id)
+                )
+                & (DatasetRelationship.is_manual == False)  # noqa: E712
             )
         )
 
-        # Save new relationships
+        if not relationships:
+            await db.commit()
+            logger.info("No relationships detected for dataset %s", dataset_id)
+            return
+
+        # Load manual relationships for this dataset so we don't duplicate
+        # a user-defined (source_col, target_col) pair with an auto one.
+        manual_pairs_result = await db.execute(
+            select(
+                DatasetRelationship.source_dataset_id,
+                DatasetRelationship.target_dataset_id,
+                DatasetRelationship.source_column,
+                DatasetRelationship.target_column,
+            ).where(
+                DatasetRelationship.model_id == model_id,
+                DatasetRelationship.is_manual == True,  # noqa: E712
+            )
+        )
+        manual_pairs = {
+            (r[0], r[1], r[2], r[3]) for r in manual_pairs_result.all()
+        }
+
+        # Save new auto-detected relationships (skipping pairs the user already defined)
+        saved = 0
         for rel in relationships:
+            pair = (
+                rel["source_dataset_id"], rel["target_dataset_id"],
+                rel["source_column"], rel["target_column"],
+            )
+            reverse = (
+                rel["target_dataset_id"], rel["source_dataset_id"],
+                rel["target_column"], rel["source_column"],
+            )
+            if pair in manual_pairs or reverse in manual_pairs:
+                continue
             dr = DatasetRelationship(
                 model_id=model_id,
                 source_dataset_id=rel["source_dataset_id"],
@@ -495,11 +530,13 @@ async def _detect_and_save_relationships(
                 target_column=rel["target_column"],
                 relationship_type=rel["relationship_type"],
                 coverage_pct=rel["coverage_pct"],
+                is_manual=False,
             )
             db.add(dr)
+            saved += 1
 
         await db.commit()
-        logger.info("Saved %d relationships for dataset %s", len(relationships), dataset_id)
+        logger.info("Saved %d auto-detected relationships for dataset %s", saved, dataset_id)
 
 
 # Stable deterministic ID for the calendar dataset within a model.

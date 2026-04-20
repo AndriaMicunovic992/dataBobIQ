@@ -115,6 +115,7 @@ class RelationshipResponse(BaseModel):
     target_column: str
     relationship_type: str
     coverage_pct: float | None = None
+    is_manual: bool = False
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

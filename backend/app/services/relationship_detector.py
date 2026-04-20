@@ -4,6 +4,10 @@ After a new dataset is materialized, this service compares its columns against
 all other active datasets in the model.  Two columns are considered a potential
 join key when they share a significant overlap of distinct values (measured by
 coverage percentage).
+
+Detection is content-driven: any column that is not a measure (sum/avg-able
+amount) is a candidate, regardless of its name or role. The 30% coverage
+threshold filters spurious matches.
 """
 from __future__ import annotations
 
@@ -16,6 +20,33 @@ logger = logging.getLogger(__name__)
 
 # Minimum overlap of distinct values to consider a relationship
 _MIN_COVERAGE_PCT = 0.30  # 30%
+
+# Data types that are never join keys (they are measured values, not identifiers)
+_EXCLUDED_DATA_TYPES = {"currency", "boolean"}
+
+# Roles that are never join keys
+_EXCLUDED_ROLES = {"measure"}
+
+# Minimum distinct values for a column to be a meaningful join candidate
+_MIN_CARDINALITY = 2
+
+
+def _is_join_candidate(col: dict[str, Any]) -> bool:
+    """Decide whether a column can participate in relationship detection.
+
+    A column qualifies when it is not a measure (by role or data type) and
+    has at least _MIN_CARDINALITY distinct values. We intentionally allow
+    text, integer, and date columns so cross-language naming conventions
+    and unmapped columns still get matched on value overlap.
+    """
+    if col.get("column_role") in _EXCLUDED_ROLES:
+        return False
+    if col.get("data_type") in _EXCLUDED_DATA_TYPES:
+        return False
+    unique_count = col.get("unique_count") or 0
+    if unique_count and unique_count < _MIN_CARDINALITY:
+        return False
+    return True
 
 
 def detect_relationships(
@@ -45,17 +76,16 @@ def detect_relationships(
     results: list[dict[str, Any]] = []
     new_view = view_name_for(new_dataset_id)
 
-    # Only consider key columns for relationship detection
-    new_dim_cols = [
-        c for c in new_columns
-        if c.get("column_role") == "key"
-        and c.get("data_type") not in ("numeric", "currency")
-    ]
+    new_dim_cols = [c for c in new_columns if _is_join_candidate(c)]
     logger.info(
-        "Relationship detection for %s: %d key columns = %s",
+        "Relationship detection for %s: %d candidate columns = %s",
         new_dataset_id[:8],
         len(new_dim_cols),
-        [(c.get("canonical_name") or c.get("source_name"), c.get("data_type")) for c in new_dim_cols],
+        [
+            (c.get("canonical_name") or c.get("source_name"),
+             c.get("column_role"), c.get("data_type"))
+            for c in new_dim_cols
+        ],
     )
 
     for other_ds in other_datasets:
@@ -63,16 +93,16 @@ def detect_relationships(
         other_view = view_name_for(other_id)
         other_cols = other_ds.get("columns", [])
 
-        other_dim_cols = [
-            c for c in other_cols
-            if c.get("column_role") == "key"
-            and c.get("data_type") not in ("numeric", "currency")
-        ]
+        other_dim_cols = [c for c in other_cols if _is_join_candidate(c)]
         logger.info(
-            "  vs %s: %d key columns = %s",
+            "  vs %s: %d candidate columns = %s",
             other_id[:8],
             len(other_dim_cols),
-            [(c.get("canonical_name") or c.get("source_name"), c.get("data_type")) for c in other_dim_cols],
+            [
+                (c.get("canonical_name") or c.get("source_name"),
+                 c.get("column_role"), c.get("data_type"))
+                for c in other_dim_cols
+            ],
         )
 
         for nc in new_dim_cols:

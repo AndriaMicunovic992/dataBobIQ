@@ -342,6 +342,7 @@ async def update_column(
                         "canonical_name": c.canonical_name,
                         "column_role": c.column_role,
                         "data_type": c.data_type,
+                        "unique_count": c.unique_count,
                     }
                     for c in all_cols
                 ]
@@ -400,6 +401,7 @@ async def create_relationship(
         source_column=body.source_column,
         target_column=body.target_column,
         relationship_type=body.relationship_type,
+        is_manual=True,
     )
     db.add(rel)
     await db.commit()

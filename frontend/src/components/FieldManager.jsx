@@ -98,11 +98,11 @@ function FieldPicker({ available, onSelect, onClose, grouped = {} }) {
               </div>
             )}
             {fields.map((f) => {
-              const name = f.field || f.label;
+              const key = f.uniqueKey;
               return (
                 <button
-                  key={name}
-                  onClick={() => { onSelect(name); onClose(); }}
+                  key={key}
+                  onClick={() => { onSelect(key); onClose(); }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: spacing.xs, width: '100%',
                     padding: `${spacing.xs}px ${spacing.sm}px`,
@@ -116,7 +116,7 @@ function FieldPicker({ available, onSelect, onClose, grouped = {} }) {
                   <span style={{ fontFamily: 'monospace', fontSize: typography.fontSizes.xs, color: colors.textMuted }}>
                     {f.column_role === 'measure' ? '∑' : '⬡'}
                   </span>
-                  <span>{f.label || name}</span>
+                  <span>{f.label || f.field}</span>
                 </button>
               );
             })}
@@ -130,8 +130,10 @@ function FieldPicker({ available, onSelect, onClose, grouped = {} }) {
 function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMultiple = true, aggMap = {}, dimensions = [], measures = [], datasets = [] }) {
   const [open, setOpen] = useState(false);
   const pool = label === 'Values' ? measures : dimensions;
+  // `fields` holds uniqueKeys ("{ds_id}:{field}"). Filter the picker pool to
+  // exclude whatever is already selected.
   const available = pool.filter(
-    (f) => !fields.some((sel) => sel === (f.field || f.name))
+    (f) => !fields.some((selKey) => selKey === f.uniqueKey)
   );
 
   // Group available fields by dataset name
@@ -168,20 +170,20 @@ function DropZone({ label, icon, fields, onAdd, onRemove, onAggChange, allowMult
             Click + to add
           </span>
         )}
-        {fields.map((fieldName) => {
+        {fields.map((key) => {
           const allFields = [...dimensions, ...measures];
-          const field = allFields.find((f) => (f.field || f.name) === fieldName) || { name: fieldName };
-          const agg = aggMap[fieldName] || 'sum';
+          const field = allFields.find((f) => f.uniqueKey === key) || { name: key, field: key };
+          const agg = aggMap[key] || 'sum';
           return (
             <FieldChip
-              key={fieldName}
+              key={key}
               field={field}
-              onRemove={() => onRemove(fieldName)}
+              onRemove={() => onRemove(key)}
               extra={
                 label === 'Values' ? (
                   <select
                     value={agg}
-                    onChange={(e) => onAggChange && onAggChange(fieldName, e.target.value)}
+                    onChange={(e) => onAggChange && onAggChange(key, e.target.value)}
                     onClick={(e) => e.stopPropagation()}
                     style={{
                       border: 'none', background: 'none', fontSize: typography.fontSizes.xs,

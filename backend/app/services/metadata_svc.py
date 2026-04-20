@@ -15,6 +15,30 @@ logger = logging.getLogger(__name__)
 _MAX_DISTINCT_VALUES = 100  # cap on dimension value lists returned to frontend
 
 
+def _resolve_actual_view_col(
+    col, view_columns: set[str], mapping_renames: dict[str, str]
+) -> str:
+    """Determine the column name that actually exists in the DuckDB view.
+
+    Priority:
+    1. canonical_name (if set and exists in the view)
+    2. source_name (if exists in the view)
+    3. mapping_config target for source_name (handles case where dedup cleared
+       canonical_name but materialization already renamed the column)
+    4. Fallback to canonical_name or source_name (best guess)
+    """
+    canonical = col.canonical_name
+    source = col.source_name
+
+    if canonical and canonical in view_columns:
+        return canonical
+    if source in view_columns:
+        return source
+    if source in mapping_renames and mapping_renames[source] in view_columns:
+        return mapping_renames[source]
+    return canonical or source
+
+
 async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataResponse:
     """Build the full metadata response for a model.
 
@@ -61,6 +85,23 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
         view_name = view_name_for(dataset.id)
         columns = dataset.columns or []
 
+        # Get actual DuckDB view column names to resolve mismatches
+        try:
+            view_columns = {r["column_name"] for r in execute_query(
+                f"SELECT column_name FROM (DESCRIBE {view_name})"
+            )}
+        except Exception:
+            logger.warning("Could not DESCRIBE %s", view_name, exc_info=True)
+            view_columns = set()
+
+        # Build mapping_config rename lookup for this dataset
+        mapping_renames: dict[str, str] = {}
+        if dataset.mapping_config:
+            for m in dataset.mapping_config.get("mappings", []):
+                src, tgt = m.get("source", ""), m.get("target", "")
+                if src and tgt and src != tgt:
+                    mapping_renames[src] = tgt
+
         dimensions: list[DimensionInfo] = []
         measures: list[MeasureInfo] = []
 
@@ -69,7 +110,7 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
         measure_cols = [c for c in columns if c.column_role == "measure"]
 
         for col in dim_cols:
-            col_name = col.canonical_name or col.source_name
+            col_name = _resolve_actual_view_col(col, view_columns, mapping_renames) if view_columns else (col.canonical_name or col.source_name)
             try:
                 val_rows = execute_query(
                     f'SELECT DISTINCT "{col_name}" AS v FROM {view_name} '
@@ -94,7 +135,7 @@ async def get_model_metadata(model_id: str, db: AsyncSession) -> MetadataRespons
             ))
 
         for col in measure_cols:
-            col_name = col.canonical_name or col.source_name
+            col_name = _resolve_actual_view_col(col, view_columns, mapping_renames) if view_columns else (col.canonical_name or col.source_name)
             stats: dict[str, Any] | None = None
             try:
                 stat_rows = execute_query(

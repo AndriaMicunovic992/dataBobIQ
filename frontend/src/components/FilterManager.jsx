@@ -2,10 +2,13 @@ import React, { useState, useMemo } from 'react';
 import { colors, spacing, radius, typography, transitions, shadows } from '../theme.js';
 import { Button } from './common/Button.jsx';
 
-function FilterChip({ filter, onRemove, onClick }) {
+function FilterChip({ filter, dimensions = [], onRemove, onClick }) {
   const [hovered, setHovered] = useState(false);
   const valueDisplay = Array.isArray(filter.values) ? filter.values.join(', ') : String(filter.value ?? '');
   const truncated = valueDisplay.length > 30 ? valueDisplay.slice(0, 30) + '...' : valueDisplay;
+  // filter.field is a uniqueKey — look up the dimension for the display label.
+  const dim = dimensions.find((d) => d.uniqueKey === filter.field);
+  const displayField = dim ? (dim.label || dim.field) : filter.field;
 
   return (
     <div
@@ -21,7 +24,7 @@ function FilterChip({ filter, onRemove, onClick }) {
       onClick={onClick}
     >
       <span style={{ fontSize: typography.fontSizes.xs, fontWeight: typography.fontWeights.medium, color: '#92400e', fontFamily: typography.fontFamily }}>
-        <span style={{ fontFamily: 'monospace' }}>{filter.field}</span>
+        <span style={{ fontFamily: 'monospace' }}>{displayField}</span>
         <span style={{ margin: `0 ${spacing.xs}px`, color: '#b45309' }}>
           {filter.operator === 'in' ? '∈' : filter.operator === 'not_in' ? '∉' : filter.operator || '='}
         </span>
@@ -47,9 +50,10 @@ function FilterEditor({ filter, metadata, onSave, onCancel }) {
   const [search, setSearch] = useState('');
   const dimensions = metadata?.dimensions || [];
 
-  // Get values from the metadata dimensions (already loaded)
+  // `field` holds a uniqueKey ("{ds_id}:{field}") so we can find the exact
+  // dimension even when several datasets share a field name.
   const values = useMemo(() => {
-    const dim = dimensions.find((d) => d.field === field);
+    const dim = dimensions.find((d) => d.uniqueKey === field);
     return dim?.values || [];
   }, [dimensions, field]);
 
@@ -93,7 +97,7 @@ function FilterEditor({ filter, metadata, onSave, onCancel }) {
         >
           <option value="">Select field...</option>
           {dimensions.map((d) => (
-            <option key={d.field} value={d.field}>{d.label || d.field}</option>
+            <option key={d.uniqueKey} value={d.uniqueKey}>{d.label || d.field}</option>
           ))}
         </select>
       </div>
@@ -226,6 +230,7 @@ export default function FilterManager({ metadata, filters, onFiltersChange }) {
         <FilterChip
           key={i}
           filter={f}
+          dimensions={metadata?.dimensions || []}
           onRemove={() => removeFilter(i)}
           onClick={() => { setEditingIndex(i); setShowEditor(true); }}
         />

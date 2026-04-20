@@ -197,6 +197,21 @@ async def run_pivot(
             if c.canonical_name and c.canonical_name != c.source_name:
                 source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
 
+        # Fallback: check mapping_config JSON for renames that were applied
+        # during materialization but not reflected in canonical_name (happens
+        # when cross-model dedup cleared the canonical_name after the mapping
+        # was already used to build the Parquet).
+        ds_result = await db.execute(
+            select(Dataset).where(Dataset.id.in_(involved_ds_ids))
+        )
+        for ds in ds_result.scalars().all():
+            if ds.mapping_config:
+                ds_map = source_to_canonical.setdefault(ds.id, {})
+                for m in ds.mapping_config.get("mappings", []):
+                    src, tgt = m.get("source", ""), m.get("target", "")
+                    if src and tgt and src != tgt and src not in ds_map:
+                        ds_map[src] = tgt
+
         for rel in relationships:
             db.expunge(rel)
             src_map = source_to_canonical.get(rel.source_dataset_id, {})

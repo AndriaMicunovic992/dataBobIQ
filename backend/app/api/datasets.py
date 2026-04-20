@@ -52,6 +52,23 @@ async def _resolve_view_column_name(
             )
             return c.canonical_name
 
+    # Fallback: check the dataset's mapping_config JSON. Handles existing
+    # data where materialization applied a rename but dedup cleared the
+    # canonical_name in metadata — the Parquet/DuckDB view has the renamed
+    # column even though the metadata doesn't reflect it.
+    ds_result = await db.execute(
+        select(Dataset).where(Dataset.id == dataset_id)
+    )
+    ds = ds_result.scalar_one_or_none()
+    if ds and ds.mapping_config:
+        for m in ds.mapping_config.get("mappings", []):
+            if m.get("source") == column_name and m.get("target"):
+                logger.info(
+                    "Resolved column '%s' → '%s' (via mapping_config) for dataset %s",
+                    column_name, m["target"], dataset_id,
+                )
+                return m["target"]
+
     # No match found — return as-is and let downstream validation raise.
     return column_name
 

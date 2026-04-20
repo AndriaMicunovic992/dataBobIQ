@@ -1,68 +1,93 @@
 import { useState, useMemo } from 'react';
 import { colors, spacing, radius, typography, shadows, inputStyle, labelStyle } from '../theme.js';
 import { Button } from './common/Button.jsx';
+import { makeFieldKey, parseFieldKey } from '../hooks/useMetadata.js';
 import FieldManager from './FieldManager.jsx';
 import FilterManager from './FilterManager.jsx';
 
 export default function WidgetConfigModal({ modelId, metadata, widget, onSave, onClose, saving }) {
-  // Initialize from existing widget or empty
+  // Initialize from existing widget or empty. Existing widgets persist bare
+  // field names (pre-uniqueKey format); reconstruct uniqueKeys using the
+  // widget's dataset_id + join_dimensions so edit mode shows the right
+  // selections.
   const existing = widget?.config || {};
+  const factDs = existing.dataset_id || null;
+  const joinDims = existing.join_dimensions || {};
+  const keyFor = (field) => {
+    const ds = joinDims[field] || factDs;
+    return ds ? makeFieldKey(ds, field) : field;
+  };
+
   const [name, setName] = useState(widget?.name || '');
   const [widgetType, setWidgetType] = useState(widget?.widget_type || 'table');
   const [pivotConfig, setPivotConfig] = useState({
     model_id: modelId,
-    rows: existing.row_dimensions || [],
-    columns: existing.column_dimension ? [existing.column_dimension] : [],
-    values: (existing.measures || []).map((m) => m.field),
-    aggregations: (existing.measures || []).reduce((acc, m) => { acc[m.field] = m.aggregation || 'sum'; return acc; }, {}),
-    filters: Object.entries(existing.filters || {}).map(([field, values]) => ({ field, values })),
+    rows: (existing.row_dimensions || []).map(keyFor),
+    columns: existing.column_dimension ? [keyFor(existing.column_dimension)] : [],
+    values: (existing.measures || []).map((m) => keyFor(m.field)),
+    aggregations: (existing.measures || []).reduce((acc, m) => {
+      acc[keyFor(m.field)] = m.aggregation || 'sum';
+      return acc;
+    }, {}),
+    filters: Object.entries(existing.filters || {}).map(([field, values]) => ({
+      field: keyFor(field),
+      values,
+    })),
     limit: existing.limit || 500,
   });
 
   const allDimensions = metadata?.dimensions || [];
   const allMeasures = metadata?.measures || [];
 
-  // Resolve fact dataset
+  // Resolve fact dataset from the first selected value. Selections are
+  // uniqueKeys ("{ds_id}:{field}"), so dataset context travels with each
+  // selection rather than being recomputed from field names.
   const datasetId = useMemo(() => {
     if (!metadata?.datasets?.length) return null;
-    const map = metadata.fieldDatasetMap || {};
-    for (const f of (pivotConfig.values || [])) {
-      if (map[f]) return map[f];
+    for (const k of (pivotConfig.values || [])) {
+      const parsed = parseFieldKey(k);
+      if (parsed.dataset_id) return parsed.dataset_id;
     }
     return metadata.datasets[0].id;
   }, [metadata, pivotConfig.values]);
 
-  // Build join_dimensions
-  const joinDims = useMemo(() => {
-    if (!datasetId || !metadata) return {};
-    const map = metadata.fieldDatasetMap || {};
-    const filterFields = (pivotConfig.filters || []).map((f) => f.field).filter(Boolean);
-    const allDims = [...(pivotConfig.rows || []), ...(pivotConfig.columns || []), ...filterFields];
+  // Build join_dimensions from uniqueKey-encoded selections.
+  const runtimeJoinDims = useMemo(() => {
+    if (!datasetId) return {};
+    const all = [
+      ...(pivotConfig.rows || []),
+      ...(pivotConfig.columns || []),
+      ...(pivotConfig.filters || []).map((f) => f.field).filter(Boolean),
+    ].map(parseFieldKey);
     const result = {};
-    for (const dim of allDims) {
-      const dimDs = map[dim];
-      if (dimDs && dimDs !== datasetId) result[dim] = dimDs;
+    for (const d of all) {
+      if (d.dataset_id && d.dataset_id !== datasetId && d.field) {
+        result[d.field] = d.dataset_id;
+      }
     }
     return result;
-  }, [datasetId, pivotConfig, metadata]);
+  }, [datasetId, pivotConfig]);
 
   const handleSave = () => {
     if (!name.trim() || pivotConfig.values.length === 0) return;
 
+    const bareField = (k) => parseFieldKey(k).field || k;
+
     const config = {
       model_id: modelId,
       dataset_id: datasetId,
-      row_dimensions: widgetType === 'card' ? [] : pivotConfig.rows,
-      column_dimension: pivotConfig.columns[0] || null,
-      measures: pivotConfig.values.map((v) => ({
-        field: v,
-        aggregation: pivotConfig.aggregations[v] || 'sum',
+      row_dimensions: widgetType === 'card' ? [] : pivotConfig.rows.map(bareField),
+      column_dimension: pivotConfig.columns[0] ? bareField(pivotConfig.columns[0]) : null,
+      measures: pivotConfig.values.map((k) => ({
+        field: bareField(k),
+        aggregation: pivotConfig.aggregations[k] || 'sum',
       })),
       filters: (pivotConfig.filters || []).reduce((acc, f) => {
-        if (f.field && f.values?.length) acc[f.field] = f.values;
+        const field = bareField(f.field);
+        if (field && f.values?.length) acc[field] = f.values;
         return acc;
       }, {}),
-      join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
+      join_dimensions: Object.keys(runtimeJoinDims).length > 0 ? runtimeJoinDims : undefined,
       limit: pivotConfig.limit || 500,
     };
 

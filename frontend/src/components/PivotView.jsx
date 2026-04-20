@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { listKPIs } from '../api.js';
-import { useMetadata } from '../hooks/useMetadata.js';
+import { useMetadata, parseFieldKey } from '../hooks/useMetadata.js';
 import { usePivot } from '../hooks/usePivot.js';
 import { colors, spacing, radius, typography, shadows, cardStyle } from '../theme.js';
 import { KPICard } from './common/Card.jsx';
@@ -21,43 +21,49 @@ export default function PivotView({ modelId }) {
 
   const { data: metadata, isLoading: metaLoading } = useMetadata(modelId);
 
-  // Resolve the primary (fact) dataset_id from selected measures,
-  // falling back to the first dataset.
+  // Resolve the primary (fact) dataset_id from the first selected value.
+  // Selections are uniqueKeys ("{ds_id}:{field}"), so the dataset_id is
+  // carried directly by the selection — no name-based lookup that could
+  // resolve to the wrong dataset when two tables share a field name.
   const datasetId = useMemo(() => {
     if (!metadata?.datasets?.length) return null;
-    const map = metadata.fieldDatasetMap || {};
-    for (const f of (pivotConfig.values || [])) {
-      if (map[f]) return map[f];
+    for (const k of (pivotConfig.values || [])) {
+      const parsed = parseFieldKey(k);
+      if (parsed.dataset_id) return parsed.dataset_id;
     }
     return metadata.datasets[0].id;
   }, [metadata, pivotConfig.values]);
 
-  // Build the API-shaped pivot request from UI config
+  // Build the API-shaped pivot request from UI config.
   const apiConfig = useMemo(() => {
     if (!datasetId || pivotConfig.values.length === 0) return null;
-    const map = metadata?.fieldDatasetMap || {};
-    // Identify dimensions that belong to other datasets (need JOINs)
-    // Include row dims, column dims, AND filter fields so filtered dimension
-    // columns are properly joined before the WHERE clause references them.
-    const filterFields = (pivotConfig.filters || []).map((f) => f.field).filter(Boolean);
-    const allDims = [...(pivotConfig.rows || []), ...(pivotConfig.columns || []), ...filterFields];
+
+    const rows = (pivotConfig.rows || []).map(parseFieldKey);
+    const cols = (pivotConfig.columns || []).map(parseFieldKey);
+    const vals = (pivotConfig.values || []).map((k) => ({ key: k, ...parseFieldKey(k) }));
+    const filters = (pivotConfig.filters || []).map((f) => ({
+      ...f,
+      ...parseFieldKey(f.field),
+    }));
+
+    // Row/column/filter dimensions from a non-fact dataset need a JOIN.
     const joinDims = {};
-    for (const dim of allDims) {
-      const dimDs = map[dim];
-      if (dimDs && dimDs !== datasetId) {
-        joinDims[dim] = dimDs;
+    for (const d of [...rows, ...cols, ...filters]) {
+      if (d.dataset_id && d.dataset_id !== datasetId && d.field) {
+        joinDims[d.field] = d.dataset_id;
       }
     }
+
     return {
       model_id: modelId,
       dataset_id: datasetId,
-      row_dimensions: pivotConfig.rows,
-      column_dimension: pivotConfig.columns[0] || null,
-      measures: pivotConfig.values.map((v) => ({
-        field: v,
-        aggregation: pivotConfig.aggregations[v] || 'sum',
+      row_dimensions: rows.map((r) => r.field),
+      column_dimension: cols[0]?.field || null,
+      measures: vals.map((v) => ({
+        field: v.field,
+        aggregation: pivotConfig.aggregations[v.key] || 'sum',
       })),
-      filters: (pivotConfig.filters || []).reduce((acc, f) => {
+      filters: filters.reduce((acc, f) => {
         if (f.field && f.values?.length) acc[f.field] = f.values;
         return acc;
       }, {}),
@@ -66,7 +72,7 @@ export default function PivotView({ modelId }) {
       limit: pivotConfig.limit || 500,
       join_dimensions: Object.keys(joinDims).length > 0 ? joinDims : undefined,
     };
-  }, [modelId, datasetId, pivotConfig, metadata]);
+  }, [modelId, datasetId, pivotConfig]);
 
   const { data: pivotData, isLoading, error } = usePivot(apiConfig);
 

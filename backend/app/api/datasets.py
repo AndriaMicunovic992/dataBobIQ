@@ -320,6 +320,9 @@ async def update_column(
                     ),
                 )
 
+    if "column_role" in update_data:
+        column.role_source = "user"
+
     for field, value in update_data.items():
         setattr(column, field, value)
 
@@ -343,6 +346,7 @@ async def update_column(
                         "column_role": c.column_role,
                         "data_type": c.data_type,
                         "unique_count": c.unique_count,
+                        "role_source": c.role_source,
                     }
                     for c in all_cols
                 ]

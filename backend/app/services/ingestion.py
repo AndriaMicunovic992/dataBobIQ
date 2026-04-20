@@ -321,6 +321,7 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
                     "column_role": c.column_role,
                     "shared_dim": c.shared_dim,
                     "unique_count": c.unique_count,
+                    "role_source": c.role_source,
                 }
                 for c in db_columns
             ]
@@ -394,7 +395,8 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
             try:
                 cal_col_meta = [
                     {"source_name": c["source_name"], "canonical_name": None,
-                     "column_role": c["column_role"], "data_type": c["data_type"]}
+                     "column_role": c["column_role"], "data_type": c["data_type"],
+                     "role_source": "system"}
                     for c in _CALENDAR_COLUMNS
                 ]
                 await _detect_and_save_relationships(cal_id, model_id, cal_col_meta)
@@ -467,6 +469,7 @@ async def _detect_and_save_relationships(
                         "column_role": c.column_role,
                         "data_type": c.data_type,
                         "unique_count": c.unique_count,
+                        "role_source": c.role_source,
                     }
                     for c in cols
                 ],
@@ -613,7 +616,8 @@ async def _ensure_calendar_dataset(model_id: str, data_dir: str) -> str:
                 try:
                     cal_col_meta = [
                         {"source_name": c["source_name"], "canonical_name": None,
-                         "column_role": c["column_role"], "data_type": c["data_type"]}
+                         "column_role": c["column_role"], "data_type": c["data_type"],
+                         "role_source": "system"}
                         for c in _CALENDAR_COLUMNS
                     ]
                     await _detect_and_save_relationships(cal_id, model_id, cal_col_meta)

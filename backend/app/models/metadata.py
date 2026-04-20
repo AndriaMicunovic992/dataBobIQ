@@ -354,6 +354,9 @@ class DatasetRelationship(Base):
     target_column: str = Column(String(255), nullable=False)
     relationship_type: str = Column(String(50), nullable=False, default="many_to_one")
     coverage_pct: float | None = Column(Float, nullable=True)
+    # True when the user manually created the relationship — these are
+    # preserved across auto-detection runs regardless of value overlap.
+    is_manual: bool = Column(Boolean, nullable=False, default=False)
     created_at: datetime = Column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

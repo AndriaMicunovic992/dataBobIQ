@@ -401,6 +401,7 @@ async def create_relationship(
         source_column=body.source_column,
         target_column=body.target_column,
         relationship_type=body.relationship_type,
+        is_manual=True,
     )
     db.add(rel)
     await db.commit()

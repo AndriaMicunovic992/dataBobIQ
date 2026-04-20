@@ -342,6 +342,7 @@ async def update_column(
                         "canonical_name": c.canonical_name,
                         "column_role": c.column_role,
                         "data_type": c.data_type,
+                        "unique_count": c.unique_count,
                     }
                     for c in all_cols
                 ]

@@ -320,6 +320,7 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
                     "data_type": c.data_type,
                     "column_role": c.column_role,
                     "shared_dim": c.shared_dim,
+                    "unique_count": c.unique_count,
                 }
                 for c in db_columns
             ]
@@ -465,6 +466,7 @@ async def _detect_and_save_relationships(
                         "canonical_name": c.canonical_name,
                         "column_role": c.column_role,
                         "data_type": c.data_type,
+                        "unique_count": c.unique_count,
                     }
                     for c in cols
                 ],

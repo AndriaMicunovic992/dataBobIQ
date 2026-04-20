@@ -354,10 +354,27 @@ async def confirm_mapping_and_materialize(dataset_id: str, mapping_config: dict)
         from app.services.parser import parse_file as parse
         df, _ = parse(raw_path, sheet_name=sheet_name)
 
+        # Filter mapping_config to only include renames whose canonical_name
+        # was actually persisted to the column metadata. Mappings that were
+        # skipped by cross-model dedup (canonical already claimed by another
+        # dataset) must NOT be applied during materialization, otherwise the
+        # Parquet column name won't match the metadata.
+        saved_canonicals = {
+            cm["source_name"]: cm["canonical_name"]
+            for cm in column_meta
+            if cm.get("canonical_name")
+        }
+        filtered_mappings = [
+            m for m in mapping_config.get("mappings", [])
+            if m.get("source") in saved_canonicals
+               and m.get("target") == saved_canonicals[m["source"]]
+        ]
+        filtered_config = {**mapping_config, "mappings": filtered_mappings}
+
         # Materialize
         parquet_path = materialize_to_parquet(
             df=df,
-            mapping_config=mapping_config,
+            mapping_config=filtered_config,
             dataset_id=dataset_id,
             model_id=model_id,
             data_dir=data_dir,

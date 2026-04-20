@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.metadata import Dataset, DatasetRelationship
+from app.models.metadata import Dataset, DatasetColumn, DatasetRelationship
 from app.schemas.pivot import PivotRequest, PivotResponse
 from app.services.pivot_engine import execute_pivot
 from app.services.scenario_engine import ensure_scenario_view
@@ -175,6 +175,44 @@ async def run_pivot(
             if (rel.source_dataset_id == body.dataset_id and rel.target_dataset_id in target_ds_ids) or \
                (rel.target_dataset_id == body.dataset_id and rel.source_dataset_id in target_ds_ids):
                 relationships.append(rel)
+
+        # Auto-heal: stored relationships may reference source_names that were
+        # renamed to canonical names during materialization. Detach from the
+        # session before mutating so the resolved names aren't persisted on
+        # commit — we want to translate for this query only, not rewrite
+        # stored data.
+        involved_ds_ids = {body.dataset_id}
+        for rel in relationships:
+            involved_ds_ids.add(rel.source_dataset_id)
+            involved_ds_ids.add(rel.target_dataset_id)
+
+        col_result = await db.execute(
+            select(DatasetColumn).where(
+                DatasetColumn.dataset_id.in_(involved_ds_ids)
+            )
+        )
+        all_cols = col_result.scalars().all()
+        source_to_canonical: dict[str, dict[str, str]] = {}
+        for c in all_cols:
+            if c.canonical_name and c.canonical_name != c.source_name:
+                source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
+
+        for rel in relationships:
+            db.expunge(rel)
+            src_map = source_to_canonical.get(rel.source_dataset_id, {})
+            tgt_map = source_to_canonical.get(rel.target_dataset_id, {})
+            if rel.source_column in src_map:
+                logger.info(
+                    "Auto-resolving relationship %s source_column '%s' → '%s'",
+                    rel.id, rel.source_column, src_map[rel.source_column],
+                )
+                rel.source_column = src_map[rel.source_column]
+            if rel.target_column in tgt_map:
+                logger.info(
+                    "Auto-resolving relationship %s target_column '%s' → '%s'",
+                    rel.id, rel.target_column, tgt_map[rel.target_column],
+                )
+                rel.target_column = tgt_map[rel.target_column]
 
     try:
         response = await asyncio.to_thread(

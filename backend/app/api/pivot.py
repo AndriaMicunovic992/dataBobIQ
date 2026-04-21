@@ -160,6 +160,40 @@ async def run_pivot(
                     detail=f"Failed to register scenario view {sc_id}: {exc}",
                 ) from exc
 
+    # Build source_to_canonical rename map for all involved datasets.
+    # This handles existing data where materialization applied renames but
+    # dedup later cleared canonical_name — the Parquet/DuckDB view has the
+    # AI-mapped name but metadata says source_name.
+    involved_ds_ids = {body.dataset_id}
+    if body.join_dimensions:
+        involved_ds_ids.update(body.join_dimensions.values())
+
+    col_result = await db.execute(
+        select(DatasetColumn).where(
+            DatasetColumn.dataset_id.in_(involved_ds_ids)
+        )
+    )
+    all_cols = col_result.scalars().all()
+    source_to_canonical: dict[str, dict[str, str]] = {}
+    for c in all_cols:
+        if c.canonical_name and c.canonical_name != c.source_name:
+            source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
+
+    # Fallback: check mapping_config JSON for renames that were applied
+    # during materialization but not reflected in canonical_name (happens
+    # when cross-model dedup cleared the canonical_name after the mapping
+    # was already used to build the Parquet).
+    ds_result = await db.execute(
+        select(Dataset).where(Dataset.id.in_(involved_ds_ids))
+    )
+    for ds in ds_result.scalars().all():
+        if ds.mapping_config:
+            ds_map = source_to_canonical.setdefault(ds.id, {})
+            for m in ds.mapping_config.get("mappings", []):
+                src, tgt = m.get("source", ""), m.get("target", "")
+                if src and tgt and src != tgt and src not in ds_map:
+                    ds_map[src] = tgt
+
     # Look up relationships if cross-dataset dimensions are requested
     relationships = []
     if body.join_dimensions:
@@ -170,47 +204,37 @@ async def run_pivot(
             )
         )
         all_rels = result.scalars().all()
-        # Filter to relationships connecting the fact dataset to the needed target datasets
         for rel in all_rels:
             if (rel.source_dataset_id == body.dataset_id and rel.target_dataset_id in target_ds_ids) or \
                (rel.target_dataset_id == body.dataset_id and rel.source_dataset_id in target_ds_ids):
                 relationships.append(rel)
 
-        # Auto-heal: stored relationships may reference source_names that were
-        # renamed to canonical names during materialization. Detach from the
-        # session before mutating so the resolved names aren't persisted on
-        # commit — we want to translate for this query only, not rewrite
-        # stored data.
-        involved_ds_ids = {body.dataset_id}
+        # Auto-heal relationship column names
         for rel in relationships:
             involved_ds_ids.add(rel.source_dataset_id)
             involved_ds_ids.add(rel.target_dataset_id)
 
-        col_result = await db.execute(
-            select(DatasetColumn).where(
-                DatasetColumn.dataset_id.in_(involved_ds_ids)
+        # Fetch any additional columns/mappings for relationship datasets not
+        # already in our map (edge case: relationship references a dataset not
+        # in join_dimensions).
+        extra_ds_ids = involved_ds_ids - {body.dataset_id} - set(body.join_dimensions.values())
+        if extra_ds_ids:
+            extra_col_result = await db.execute(
+                select(DatasetColumn).where(DatasetColumn.dataset_id.in_(extra_ds_ids))
             )
-        )
-        all_cols = col_result.scalars().all()
-        source_to_canonical: dict[str, dict[str, str]] = {}
-        for c in all_cols:
-            if c.canonical_name and c.canonical_name != c.source_name:
-                source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
-
-        # Fallback: check mapping_config JSON for renames that were applied
-        # during materialization but not reflected in canonical_name (happens
-        # when cross-model dedup cleared the canonical_name after the mapping
-        # was already used to build the Parquet).
-        ds_result = await db.execute(
-            select(Dataset).where(Dataset.id.in_(involved_ds_ids))
-        )
-        for ds in ds_result.scalars().all():
-            if ds.mapping_config:
-                ds_map = source_to_canonical.setdefault(ds.id, {})
-                for m in ds.mapping_config.get("mappings", []):
-                    src, tgt = m.get("source", ""), m.get("target", "")
-                    if src and tgt and src != tgt and src not in ds_map:
-                        ds_map[src] = tgt
+            for c in extra_col_result.scalars().all():
+                if c.canonical_name and c.canonical_name != c.source_name:
+                    source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
+            extra_ds_result = await db.execute(
+                select(Dataset).where(Dataset.id.in_(extra_ds_ids))
+            )
+            for ds_extra in extra_ds_result.scalars().all():
+                if ds_extra.mapping_config:
+                    ds_map = source_to_canonical.setdefault(ds_extra.id, {})
+                    for m_extra in ds_extra.mapping_config.get("mappings", []):
+                        src, tgt = m_extra.get("source", ""), m_extra.get("target", "")
+                        if src and tgt and src != tgt and src not in ds_map:
+                            ds_map[src] = tgt
 
         for rel in relationships:
             db.expunge(rel)
@@ -228,6 +252,64 @@ async def run_pivot(
                     rel.id, rel.target_column, tgt_map[rel.target_column],
                 )
                 rel.target_column = tgt_map[rel.target_column]
+
+    # Auto-heal field names in the request itself. Stored widget configs or
+    # stale frontend state may reference source_names that were renamed in
+    # the DuckDB view.
+    fact_map = source_to_canonical.get(body.dataset_id, {})
+
+    if body.join_dimensions:
+        dim_maps = {ds_id: source_to_canonical.get(ds_id, {}) for ds_id in set(body.join_dimensions.values())}
+
+        # Translate row_dimensions
+        new_rows = []
+        for dim in body.row_dimensions:
+            if dim in body.join_dimensions:
+                ds_id = body.join_dimensions[dim]
+                new_rows.append(dim_maps.get(ds_id, {}).get(dim, dim))
+            else:
+                new_rows.append(fact_map.get(dim, dim))
+        body.row_dimensions = new_rows
+
+        # Translate column_dimension
+        if body.column_dimension:
+            if body.column_dimension in body.join_dimensions:
+                ds_id = body.join_dimensions[body.column_dimension]
+                body.column_dimension = dim_maps.get(ds_id, {}).get(body.column_dimension, body.column_dimension)
+            else:
+                body.column_dimension = fact_map.get(body.column_dimension, body.column_dimension)
+
+        # Translate filter keys
+        if body.filters:
+            new_filters = {}
+            for col, vals in body.filters.items():
+                if col in body.join_dimensions:
+                    ds_id = body.join_dimensions[col]
+                    new_filters[dim_maps.get(ds_id, {}).get(col, col)] = vals
+                else:
+                    new_filters[fact_map.get(col, col)] = vals
+            body.filters = new_filters
+
+        # Translate join_dimensions keys (the field names must match the view)
+        new_join_dims = {}
+        for dim_field, ds_id in body.join_dimensions.items():
+            new_key = dim_maps.get(ds_id, {}).get(dim_field, dim_field)
+            new_join_dims[new_key] = ds_id
+        body.join_dimensions = new_join_dims
+    else:
+        # Fact-only query: translate row_dimensions and column_dimension
+        if fact_map:
+            body.row_dimensions = [fact_map.get(d, d) for d in body.row_dimensions]
+            if body.column_dimension:
+                body.column_dimension = fact_map.get(body.column_dimension, body.column_dimension)
+            if body.filters:
+                body.filters = {fact_map.get(k, k): v for k, v in body.filters.items()}
+
+    # Translate measure fields (always from fact table)
+    if fact_map:
+        for measure in body.measures:
+            if measure.field in fact_map:
+                measure.field = fact_map[measure.field]
 
     try:
         response = await asyncio.to_thread(

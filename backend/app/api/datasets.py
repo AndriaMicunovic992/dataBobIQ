@@ -31,31 +31,30 @@ async def _resolve_view_column_name(
     source_name. If the user submits a source_name that has been renamed,
     translate it to the canonical name so the JOIN works.
     """
+    from app.duckdb_engine import execute_query, view_name_for
+
     result = await db.execute(
         select(DatasetColumn).where(DatasetColumn.dataset_id == dataset_id)
     )
     cols = result.scalars().all()
 
-    # Direct match: user submitted the view name already (canonical_name or
-    # an unmapped source_name).
-    for c in cols:
-        view_name = c.canonical_name or c.source_name
-        if view_name == column_name:
-            return view_name
+    # Get actual DuckDB view columns for validation
+    view_columns: set[str] = set()
+    try:
+        view_name = view_name_for(dataset_id)
+        view_columns = {r["column_name"] for r in execute_query(
+            f"SELECT column_name FROM (DESCRIBE {view_name})"
+        )}
+    except Exception:
+        pass
 
-    # Fallback: user submitted a source_name that was renamed to a canonical.
-    for c in cols:
-        if c.source_name == column_name and c.canonical_name:
-            logger.info(
-                "Resolved column '%s' → '%s' (canonical) for dataset %s",
-                column_name, c.canonical_name, dataset_id,
-            )
-            return c.canonical_name
+    # If the submitted name exists directly in the DuckDB view, use it
+    if view_columns and column_name in view_columns:
+        return column_name
 
-    # Fallback: check the dataset's mapping_config JSON. Handles existing
-    # data where materialization applied a rename but dedup cleared the
-    # canonical_name in metadata — the Parquet/DuckDB view has the renamed
-    # column even though the metadata doesn't reflect it.
+    # Check mapping_config: handles existing data where materialization applied
+    # a rename but dedup cleared canonical_name — the view has the mapped name
+    # even though metadata says source_name.
     ds_result = await db.execute(
         select(Dataset).where(Dataset.id == dataset_id)
     )
@@ -63,11 +62,30 @@ async def _resolve_view_column_name(
     if ds and ds.mapping_config:
         for m in ds.mapping_config.get("mappings", []):
             if m.get("source") == column_name and m.get("target"):
+                target = m["target"]
+                if not view_columns or target in view_columns:
+                    logger.info(
+                        "Resolved column '%s' → '%s' (via mapping_config) for dataset %s",
+                        column_name, target, dataset_id,
+                    )
+                    return target
+
+    # Fallback: user submitted a source_name that was renamed to a canonical.
+    for c in cols:
+        if c.source_name == column_name and c.canonical_name:
+            if not view_columns or c.canonical_name in view_columns:
                 logger.info(
-                    "Resolved column '%s' → '%s' (via mapping_config) for dataset %s",
-                    column_name, m["target"], dataset_id,
+                    "Resolved column '%s' → '%s' (canonical) for dataset %s",
+                    column_name, c.canonical_name, dataset_id,
                 )
-                return m["target"]
+                return c.canonical_name
+
+    # Direct match on metadata (no DuckDB validation available)
+    if not view_columns:
+        for c in cols:
+            view_name_col = c.canonical_name or c.source_name
+            if view_name_col == column_name:
+                return view_name_col
 
     # No match found — return as-is and let downstream validation raise.
     return column_name

@@ -14,7 +14,7 @@ from app.models.metadata import Dataset, DatasetColumn, DatasetRelationship
 from app.schemas.pivot import PivotRequest, PivotResponse
 from app.services.pivot_engine import execute_pivot
 from app.services.scenario_engine import ensure_scenario_view
-from app.duckdb_engine import register_dataset, _registered_datasets
+from app.duckdb_engine import execute_query, register_dataset, view_name_for, _registered_datasets
 
 logger = logging.getLogger(__name__)
 
@@ -160,13 +160,42 @@ async def run_pivot(
                     detail=f"Failed to register scenario view {sc_id}: {exc}",
                 ) from exc
 
-    # Build source_to_canonical rename map for all involved datasets.
-    # This handles existing data where materialization applied renames but
-    # dedup later cleared canonical_name — the Parquet/DuckDB view has the
-    # AI-mapped name but metadata says source_name.
+    # Build source_to_canonical rename map for all involved datasets,
+    # VALIDATED against actual DuckDB view columns. We only translate names
+    # when the source name is NOT in the view AND the target name IS — this
+    # avoids breaking joins where mapping_config has stale entries that were
+    # never actually applied to the Parquet (because dedup cleared the
+    # canonical_name and materialization respected that).
     involved_ds_ids = {body.dataset_id}
     if body.join_dimensions:
         involved_ds_ids.update(body.join_dimensions.values())
+
+    # DESCRIBE each involved view once to get actual columns
+    view_columns_by_ds: dict[str, set[str]] = {}
+    for ds_id in involved_ds_ids:
+        try:
+            view = view_name_for(ds_id)
+            view_columns_by_ds[ds_id] = {
+                r["column_name"] for r in execute_query(
+                    f"SELECT column_name FROM (DESCRIBE {view})"
+                )
+            }
+        except Exception:
+            logger.warning("Could not DESCRIBE view for dataset %s", ds_id, exc_info=True)
+            view_columns_by_ds[ds_id] = set()
+
+    def _add_rename(ds_id: str, src: str, tgt: str, ds_map: dict[str, str]) -> None:
+        """Only register src→tgt if src is missing and tgt exists in the view."""
+        if not src or not tgt or src == tgt or src in ds_map:
+            return
+        view_cols = view_columns_by_ds.get(ds_id, set())
+        # If we couldn't introspect the view, keep the old behavior (best effort)
+        if not view_cols:
+            ds_map[src] = tgt
+            return
+        # Only translate when src isn't actually in the view but tgt is
+        if src not in view_cols and tgt in view_cols:
+            ds_map[src] = tgt
 
     col_result = await db.execute(
         select(DatasetColumn).where(
@@ -177,12 +206,12 @@ async def run_pivot(
     source_to_canonical: dict[str, dict[str, str]] = {}
     for c in all_cols:
         if c.canonical_name and c.canonical_name != c.source_name:
-            source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
+            ds_map = source_to_canonical.setdefault(c.dataset_id, {})
+            _add_rename(c.dataset_id, c.source_name, c.canonical_name, ds_map)
 
-    # Fallback: check mapping_config JSON for renames that were applied
-    # during materialization but not reflected in canonical_name (happens
-    # when cross-model dedup cleared the canonical_name after the mapping
-    # was already used to build the Parquet).
+    # Fallback: check mapping_config JSON for renames that may have been
+    # applied during materialization. _add_rename validates against the
+    # actual view, so stale mapping_config entries are ignored.
     ds_result = await db.execute(
         select(Dataset).where(Dataset.id.in_(involved_ds_ids))
     )
@@ -190,9 +219,7 @@ async def run_pivot(
         if ds.mapping_config:
             ds_map = source_to_canonical.setdefault(ds.id, {})
             for m in ds.mapping_config.get("mappings", []):
-                src, tgt = m.get("source", ""), m.get("target", "")
-                if src and tgt and src != tgt and src not in ds_map:
-                    ds_map[src] = tgt
+                _add_rename(ds.id, m.get("source", ""), m.get("target", ""), ds_map)
 
     # Look up relationships if cross-dataset dimensions are requested
     relationships = []
@@ -219,12 +246,25 @@ async def run_pivot(
         # in join_dimensions).
         extra_ds_ids = involved_ds_ids - {body.dataset_id} - set(body.join_dimensions.values())
         if extra_ds_ids:
+            for ds_id in extra_ds_ids:
+                if ds_id not in view_columns_by_ds:
+                    try:
+                        view = view_name_for(ds_id)
+                        view_columns_by_ds[ds_id] = {
+                            r["column_name"] for r in execute_query(
+                                f"SELECT column_name FROM (DESCRIBE {view})"
+                            )
+                        }
+                    except Exception:
+                        view_columns_by_ds[ds_id] = set()
+
             extra_col_result = await db.execute(
                 select(DatasetColumn).where(DatasetColumn.dataset_id.in_(extra_ds_ids))
             )
             for c in extra_col_result.scalars().all():
                 if c.canonical_name and c.canonical_name != c.source_name:
-                    source_to_canonical.setdefault(c.dataset_id, {})[c.source_name] = c.canonical_name
+                    ds_map = source_to_canonical.setdefault(c.dataset_id, {})
+                    _add_rename(c.dataset_id, c.source_name, c.canonical_name, ds_map)
             extra_ds_result = await db.execute(
                 select(Dataset).where(Dataset.id.in_(extra_ds_ids))
             )
@@ -232,9 +272,7 @@ async def run_pivot(
                 if ds_extra.mapping_config:
                     ds_map = source_to_canonical.setdefault(ds_extra.id, {})
                     for m_extra in ds_extra.mapping_config.get("mappings", []):
-                        src, tgt = m_extra.get("source", ""), m_extra.get("target", "")
-                        if src and tgt and src != tgt and src not in ds_map:
-                            ds_map[src] = tgt
+                        _add_rename(ds_extra.id, m_extra.get("source", ""), m_extra.get("target", ""), ds_map)
 
         for rel in relationships:
             db.expunge(rel)

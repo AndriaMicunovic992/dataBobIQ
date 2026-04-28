@@ -1063,22 +1063,54 @@ async def _execute_tool(
             return {"error": f"Failed to list scenarios: {exc}"}, None
 
     elif tool_name == "compare_scenarios":
-        from app.services.scenario_engine import compute_variance
+        from app.services.scenario_engine import compute_variance, _target_year_from_rules
         from app.config import settings as app_settings
         scenario_ids = tool_input.get("scenario_ids", [])
-        # Support single ID for backwards compat
         if not scenario_ids:
             sid = tool_input.get("scenario_id", "")
             scenario_ids = [sid] if sid else []
         group_by = tool_input.get("group_by", [])
         value_field = tool_input.get("value_field", "amount")
+        tool_filters = tool_input.get("filters")
         try:
+            # Look up base_year / target_year from each scenario's DB record
+            # so compute_variance can filter actuals and normalize time joins.
+            from app.database import AsyncSessionLocal
+            from app.models.metadata import Scenario as ScenarioModel, ScenarioRule
+            from sqlalchemy import select as sa_select
+            from sqlalchemy.orm import selectinload
+
             results = []
             for sid in scenario_ids:
+                base_year = None
+                target_year = None
+                try:
+                    async with AsyncSessionLocal() as _db:
+                        sc_result = await _db.execute(
+                            sa_select(ScenarioModel)
+                            .where(ScenarioModel.id == sid)
+                            .options(selectinload(ScenarioModel.rules))
+                        )
+                        sc_obj = sc_result.scalar_one_or_none()
+                        if sc_obj:
+                            base_year = (sc_obj.base_config or {}).get("base_year")
+                            if base_year is not None:
+                                base_year = int(base_year)
+                            rule_dicts = [
+                                {"period_from": r.period_from}
+                                for r in (sc_obj.rules or [])
+                            ]
+                            target_year = _target_year_from_rules(rule_dicts)
+                except Exception as exc:
+                    logger.warning("Could not look up scenario %s years: %s", sid, exc)
+
                 result = compute_variance(
                     dataset_id, sid, group_by, value_field,
+                    filters=tool_filters,
                     model_id=model_id,
                     data_dir=app_settings.data_dir,
+                    base_year=base_year,
+                    target_year=target_year,
                 )
                 results.append(_sanitize_rows_dict({"scenario_id": sid, **result}))
             return {"comparisons": results} if len(results) > 1 else results[0], None

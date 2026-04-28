@@ -692,18 +692,26 @@ def build_scenario_merge_sql(
     filters: dict | None = None,
     join_dimensions: dict[str, str] | None = None,
     relationships: list | None = None,
+    base_year: int | None = None,
+    target_year: int | None = None,
 ) -> tuple[str, list[Any]]:
-    """Build a COALESCE-based merge SQL that overlays scenario values on actuals.
+    """Build a variance SQL comparing actuals (base_year) vs scenario (target_year).
 
-    Supports cross-dataset JOINs: when ``join_dimensions`` maps a group_by field
-    to a different dataset_id, the query JOINs to that lookup table so the column
-    is accessible for grouping.
+    When ``base_year`` and ``target_year`` are provided:
+    - Actuals CTE is filtered to base_year rows only
+    - Time columns in group_by are normalized (sub-year portion only) so the
+      JOIN matches across different years (e.g. 2025-01 ↔ 2026-01)
 
     Returns (sql, params).
     """
     params: list[Any] = []
     base_view = view_name_for(dataset_id)
     val_col = _quote(value_field)
+
+    # Detect time columns in group_by for cross-year normalization
+    time_cols_in_group = [g for g in group_by if g in _TIME_COL_CANDIDATES]
+    non_time_cols = [g for g in group_by if g not in _TIME_COL_CANDIDATES]
+    needs_time_normalization = bool(time_cols_in_group and base_year and target_year and base_year != target_year)
 
     # Build JOINs for cross-dataset dimensions
     join_sql, alias_map = _build_variance_join_clauses(
@@ -732,7 +740,61 @@ def build_scenario_merge_sql(
                 filter_parts.append(f"{col} = ?")
                 params.append(spec)
 
-    where_sql = f"WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
+    # Add base_year filter for actuals when doing cross-year comparison.
+    # This scopes actuals to only the base year for a fair comparison.
+    base_year_filter = ""
+    base_year_params: list[Any] = []
+    if base_year:
+        time_col = None
+        for candidate in _TIME_COL_CANDIDATES:
+            # Check if candidate exists in the view (simplified: use first match)
+            if candidate in group_by or candidate == "year":
+                time_col = candidate
+                break
+        if not time_col:
+            # Try to detect from DuckDB view
+            try:
+                view_cols = {r["column_name"] for r in execute_query(
+                    f"SELECT column_name FROM (DESCRIBE {base_view})"
+                )}
+                for candidate in _TIME_COL_CANDIDATES:
+                    if candidate in view_cols:
+                        time_col = candidate
+                        break
+            except Exception:
+                pass
+
+        if time_col:
+            tc = _qualify(time_col)
+            # For integer year columns, filter directly
+            if time_col == "year":
+                base_year_filter = f"{tc} = ?"
+                base_year_params.append(base_year)
+            else:
+                # For string/date columns starting with YYYY, filter by year prefix
+                base_year_filter = f"CAST({tc} AS VARCHAR) LIKE ?"
+                base_year_params.append(f"{base_year}%")
+
+    # Combine filters for actuals
+    actuals_filter_parts = list(filter_parts)
+    actuals_filter_params = list(params)
+    if base_year_filter:
+        actuals_filter_parts.append(base_year_filter)
+        actuals_filter_params.extend(base_year_params)
+
+    actuals_where = f"WHERE {' AND '.join(actuals_filter_parts)}" if actuals_filter_parts else ""
+    scenario_where = f"WHERE {' AND '.join(filter_parts)}" if filter_parts else ""
+
+    # Build SELECT/GROUP BY expressions.
+    # When normalizing time columns across years, use the sub-year portion
+    # (e.g. "-01" from "2025-01") as a join key, but show the full value.
+    def _time_norm_expr(col: str, fact_alias: str = "f") -> str:
+        """SQL expression extracting sub-year portion of a time column."""
+        qc = _qualify(col, fact_alias)
+        if col == "year":
+            return f"'year'"  # collapse to single group
+        # For string columns like year_month "2025-01" → "-01"
+        return f"SUBSTRING(CAST({qc} AS VARCHAR), 5)"
 
     # SELECT: qualified references aliased to plain column names
     select_group = ", ".join(
@@ -740,13 +802,20 @@ def build_scenario_merge_sql(
     )
     select_group_sql = f"{select_group}, " if select_group else ""
 
-    # GROUP BY: use positional references (1, 2, ...) to avoid DuckDB's
-    # "aliases cannot be used in GROUP BY" error when qualified expressions
-    # produce aliases that collide with the original column name.
+    # GROUP BY: use positional references
     group_by_sql = (
         f"GROUP BY {', '.join(str(i + 1) for i in range(len(group_by)))}"
         if group_by else ""
     )
+
+    # For time-normalized JOIN, we need a join_key column in both CTEs
+    if needs_time_normalization:
+        time_norm_exprs = []
+        for tc in time_cols_in_group:
+            time_norm_exprs.append(f"{_time_norm_expr(tc)} AS _jk_{tc}")
+        extra_select = ", " + ", ".join(time_norm_exprs)
+    else:
+        extra_select = ""
 
     # FROM clause for fact tables (with optional JOINs)
     actuals_from = f"{base_view} AS f {join_sql}" if use_aliases else base_view
@@ -757,43 +826,54 @@ def build_scenario_merge_sql(
     # Base actuals CTE
     actuals_cte = (
         f"actuals AS ("
-        f"SELECT {select_group_sql}SUM({_qualify(value_field)}) AS actual_{value_field} "
-        f"FROM {actuals_from} {where_sql} "
+        f"SELECT {select_group_sql}SUM({_qualify(value_field)}) AS actual_{value_field}{extra_select} "
+        f"FROM {actuals_from} {actuals_where} "
         f"{group_by_sql})"
     )
     cte_parts.append(actuals_cte)
 
-    # Scenario CTEs — the scenario parquet already has the full dataset
-    # (with rules applied), so it needs the same JOINs as actuals
-    base_filter_param_count = len(params)
+    # Scenario CTEs
+    base_filter_param_count = len(params)  # original filter params only (no base_year)
     for sc_id in scenario_ids:
         sc_view = view_name_for(f"sc_{sc_id}")
         sc_alias_name = f"sc_{sc_id.replace('-', '_')}"
 
-        # Build scenario-specific JOIN sql (same lookup tables, different fact view)
-        sc_join_sql = join_sql  # Same joins, just on a different fact view
+        sc_join_sql = join_sql
         sc_from = f"{sc_view} AS f {sc_join_sql}" if use_aliases else sc_view
 
         sc_cte = (
             f"{sc_alias_name} AS ("
-            f"SELECT {select_group_sql}SUM({_qualify(value_field)}) AS scenario_{value_field} "
-            f"FROM {sc_from} {where_sql} "
+            f"SELECT {select_group_sql}SUM({_qualify(value_field)}) AS scenario_{value_field}{extra_select} "
+            f"FROM {sc_from} {scenario_where} "
             f"{group_by_sql})"
         )
         cte_parts.append(sc_cte)
-        # Duplicate filter params for this CTE's WHERE clause
+        # Duplicate filter params for this CTE's WHERE clause (original filters only)
         params.extend(params[:base_filter_param_count])
 
-    # Final SELECT with COALESCE
+    # Now append the actuals-specific base_year params
+    # Rebuild full params: actuals params come first (original + base_year), then scenario params
+    full_params = list(actuals_filter_params)
+    for _ in scenario_ids:
+        full_params.extend(params[:base_filter_param_count])
+
+    # Final SELECT with COALESCE + proper JOIN
     if scenario_ids:
         first_sc = f"sc_{scenario_ids[0].replace('-', '_')}"
         coalesce_expr = f"COALESCE({first_sc}.scenario_{value_field}, actuals.actual_{value_field})"
+
+        # Build JOIN condition
         join_clauses = ""
         for sc_id in scenario_ids:
             sc_alias_name = f"sc_{sc_id.replace('-', '_')}"
-            on_clause = " AND ".join(
-                f'actuals.{_quote(g)} = {sc_alias_name}.{_quote(g)}' for g in group_by
-            ) if group_by else "TRUE"
+            on_parts = []
+            for g in group_by:
+                if needs_time_normalization and g in time_cols_in_group:
+                    # Join on normalized (sub-year) time key
+                    on_parts.append(f'actuals._jk_{g} = {sc_alias_name}._jk_{g}')
+                else:
+                    on_parts.append(f'actuals.{_quote(g)} = {sc_alias_name}.{_quote(g)}')
+            on_clause = " AND ".join(on_parts) if on_parts else "TRUE"
             join_clauses += f" LEFT JOIN {sc_alias_name} ON {on_clause}"
 
         select_cols = f"{', '.join('actuals.' + _quote(g) for g in group_by)}, " if group_by else ""
@@ -807,7 +887,7 @@ def build_scenario_merge_sql(
     else:
         sql = f"WITH {actuals_cte} SELECT * FROM actuals"
 
-    return sql, params
+    return sql, full_params
 
 
 def ensure_scenario_view(scenario_id: str, model_id: str, data_dir: str = "") -> None:
@@ -854,11 +934,15 @@ def compute_variance(
     data_dir: str = "",
     join_dimensions: dict[str, str] | None = None,
     relationships: list | None = None,
+    base_year: int | None = None,
+    target_year: int | None = None,
 ) -> dict:
     """Compute actual vs scenario variance.
 
     Returns a dict with groups, totals, and delta information.
-    Supports cross-dataset JOINs via join_dimensions and relationships.
+    When ``base_year``/``target_year`` are provided, actuals are filtered to
+    the base year and time-column joins are normalized so cross-year
+    comparison works correctly.
     """
     # Ensure scenario view is registered (may have been lost on server restart)
     _ensure_scenario_view(scenario_id, model_id, data_dir=data_dir)
@@ -867,6 +951,8 @@ def compute_variance(
         dataset_id, [scenario_id], group_by, value_field, filters,
         join_dimensions=join_dimensions,
         relationships=relationships,
+        base_year=base_year,
+        target_year=target_year,
     )
 
     rows = execute_query(sql, params if params else None)
